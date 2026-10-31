@@ -49,6 +49,7 @@ pip install -r requirements.txt pyyaml numpy
 cp .env.example .env              # CRUSTDATA_API_KEY; OLLAMA_API_KEY optional (beam, falls back to gemma4:31b)
 
 python -m receipts scout                      # round of 10 thesis-fit companies, predictions sealed
+python -m receipts scout --thesis "Series A devtools in India"   # a never-seen thesis, typed in plain English
 python -m receipts decide --round 1 --pick 1,4,5   # your real choices; agent scores itself and learns
 python -m receipts scout                      # next round uses what it learned
 python -m receipts board                      # deal board
@@ -69,9 +70,17 @@ python -m receipts tamper last && python -m receipts verify last              # 
 | `actions` | Allowed: `update_deal_board`, `draft_email_to_outbox`, `archive_signed_trail`. Forbidden: `send_external_email`, `contact_any_person`. Forbidden actions are blocked and logged. |
 | `learning` | Your stated prior preferences, how strongly they anchor learning, and weight bounds. |
 
+## Free-text thesis (a request it has never seen)
+Type a thesis in plain English, on the Scout page or with `scout --thesis`. The LLM *proposes* filters; code validates every value:
+- **Industries** are checked against Crustdata's autocomplete, and each lookup is a receipt.
+- **Round types** must be in the allowed set, and **countries** are normalized.
+- **Criteria it can't search on** (e.g. "technical founders") are shown to you, not invented.
+
+If too few new companies match, the agent relaxes the least essential filter first: split keywords, then drop keywords, then drop recency, then widen to neighbouring stages. Each relaxation is a ledger decision shown in the round. Industry, country and the rulebook's guardrails are never relaxed.
+
 ## Preference learning
 - **Model.** Bayesian logistic regression over receipt-backed features: headcount growth, engineering hiring share, open roles, time since last round, team size, funding, stage, and age. It starts from the stated thesis, and each pick or reject moves it. A Laplace approximation gives its confidence, so it defers to you while uncertain.
-- **Honest scoring.** Predictions are sealed before you choose, and agreement ("matched 8/10", "you picked 2 of my top 3") is computed afterwards. Nobody, including us, can edit the forecast after seeing your picks.
+- **Honest scoring.** Predictions are sealed before you choose, and agreement ("matched 8/10", "you picked 2 of my top 3") plus a **calibration (Brier) score** are computed afterwards. A Brier score of 0.25 is what always guessing 50% would get, so lower is better. Nobody, including us, can edit the forecast after seeing your picks.
 - **Re-checkable.** The model is a deterministic function of your recorded decisions; `verify` re-fits it and gets the same weights.
 - **Honest limit.** With 10–20 decisions the model is still weak. Agreement is noisy round to round (synthetic test: 0.7–0.9), and it improves as decisions accumulate. We report it; we don't promise it.
 

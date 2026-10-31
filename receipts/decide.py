@@ -82,7 +82,8 @@ def decide(strategy: dict, strategy_text: str, round_no: int, picks_spec: str) -
         trace.info(f"{mark} {d['n']:>2}. {d['name']}: agent predicted {'pick' if d['predicted_pick'] else 'reject'}"
                    f" (p {d['probability']:.2f}), you {'PICKED' if d['picked'] else 'rejected'}")
     trace.ok(f"agreement {agreement['decisions_matched']}/{agreement['total']}; "
-             f"you picked {agreement['top_k_overlap']} of the agent's top {agreement['top_k']}")
+             f"you picked {agreement['top_k_overlap']} of the agent's top {agreement['top_k']}; "
+             f"calibration (Brier) {agreement['brier']:.3f} (0.25 = coin flip)")
 
     trace.step("Executing your decisions")
     runner = ActionRunner(ledger, strategy, run_id)
@@ -134,9 +135,11 @@ def _update_learned_md(meta: dict, report: str) -> None:
     lines = ["# What the agent has learned about your preferences", "",
              "Generated from the signed decision runs; edit STRATEGY.md, not this file.", "",
              "## Agreement with you, round by round (scored against sealed predictions)", "",
-             "| Round | Matched decisions | Your picks among agent's top-k |", "|---|---|---|"]
+             "| Round | Matched decisions | Your picks among agent's top-k | Calibration (Brier, lower is better; 0.25 = coin flip) |",
+             "|---|---|---|---|"]
     for h in history:
-        lines.append(f"| {h['round_no']} | {h['decisions_matched']}/{h['total']} | {h['top_k_overlap']}/{h['top_k']} |")
+        brier = f"{h['brier']:.3f}" if h.get("brier") is not None else "–"
+        lines.append(f"| {h['round_no']} | {h['decisions_matched']}/{h['total']} | {h['top_k_overlap']}/{h['top_k']} | {brier} |")
     lines += ["", "## Current preferences", ""] + [f"- {line}" for line in meta["learned"]] + [""]
     LEARNED_PATH.write_text("\n".join(lines), encoding="utf-8")
 

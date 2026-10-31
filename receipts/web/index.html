@@ -30,6 +30,11 @@
       <p>The agent scouts thesis-fit companies, scores them with what it has learned about you, and <b>seals its predictions</b> before you choose. You pick; it scores itself and learns.</p></div>
       <div class="actions"><label>Companies <input id="scout-n" type="number" min="3" max="25" value="10"></label>
         <button id="btn-scout" class="primary">Scout a new round</button></div></header>
+    <div class="card thesis-card">
+      <b>Describe what you're looking for this round</b> <span class="small muted">(optional; leave empty to use the rulebook's thesis)</span>
+      <textarea id="thesis-text" class="thesis" placeholder="e.g. Series A developer-tools companies in India with strong engineering hiring"></textarea>
+      <div class="small muted">The agent turns this into Crustdata filters. Every value is validated in code (industries checked against Crustdata), and anything it can't search on is shown to you, never invented. Guardrails and autonomy limits from the rulebook still apply.</div>
+    </div>
     <div class="tabs" id="round-tabs"></div>
     <div id="round-view"></div>
   </section>

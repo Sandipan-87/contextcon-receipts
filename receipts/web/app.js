@@ -97,6 +97,7 @@ async function renderRound(r) {
     <div class="banner info"><div class="big">${run.candidates.length}</div><div><b>Round ${r.round_no}: companies matching your thesis, newest fundraises first.</b><br>
       <span class="small">The agent has learned from <b>${m.n_decisions}</b> of your decisions. Its predictions were sealed in the signed ledger before you see this page.
       <label style="margin-left:10px"><input type="checkbox" id="reveal"> reveal the agent's sealed prediction (pick blind for a fair score)</label></span></div></div>
+    ${thesisBox(run.meta)}
     <div class="card" style="padding:0"><table><thead><tr><th>Pick</th><th>Company</th><th>Team</th><th>Growth YoY</th><th>Last round</th><th>Open roles (eng)</th><th class="agentcol">Agent prediction</th><th class="agentcol">Why</th></tr></thead><tbody>
     ${run.candidates.map(c => {
       const x = c.raw, refs = c.refs, F = k => refs[k] ? ` <button class="fact" onclick="openFact('${r.run_id}','${refs[k]}')">${refs[k]}</button>` : "";
@@ -121,6 +122,23 @@ async function renderRound(r) {
   };
 }
 
+function thesisBox(meta) {
+  const t = meta.thesis, tr = meta.thesis_request;
+  if (!t && !tr) return "";
+  const f = [];
+  if (t) {
+    f.push(...(t.sectors || []).map(x => `industry: ${x}`), ...(t.hq_countries || []).map(x => `HQ: ${x}`),
+      `team ${t.headcount[0]}–${t.headcount[1]}`, ...(t.last_round || []).map(x => `round: ${x.replace("_", " ")}`));
+    if (t.raised_since) f.push(`raised since ${t.raised_since}`);
+    (t.description_keywords || []).forEach(k => f.push(`mentions “${k}”`));
+  }
+  return `<div class="card"><b>${tr ? `Your thesis: “${esc(tr.text)}”` : "Rulebook thesis"}</b>
+    ${tr ? `<span class="small muted"> · interpreted by ${esc(tr.model)}</span>` : ""}
+    <div class="filters">${f.map(x => chip(x, "VERIFIED")).join("")}</div>
+    ${(meta.relaxed || []).length ? `<div class="filters">${meta.relaxed.map(x => chip("relaxed: " + x, "PARTIAL")).join("")}</div>` : ""}
+    ${tr && tr.unmapped.length ? `<div class="filters">${tr.unmapped.map(x => chip("not a filter: " + x, "UNVERIFIABLE")).join("")}</div>` : ""}</div>`;
+}
+
 async function renderDecided(r) {
   const run = await api(`/api/run/${r.decided_by}`);
   const m = run.meta, a = m.agreement;
@@ -129,7 +147,8 @@ async function renderDecided(r) {
   $("#round-view").innerHTML = `
     <div class="grid2">
       <div class="banner ${a.accuracy >= 0.7 ? "ok" : "warn"}"><div class="big">${a.decisions_matched}/${a.total}</div>
-        <div><b>The agent's sealed predictions matched your decisions.</b><br><span class="small">You picked ${a.top_k_overlap} of its top ${a.top_k}. Scored against predictions sealed in <span class="mono">${esc(m.scout_run_id)}</span> before you decided.</span></div></div>
+        <div><b>The agent's sealed predictions matched your decisions.</b><br><span class="small">You picked ${a.top_k_overlap} of its top ${a.top_k}.
+          ${a.brier != null ? `Calibration (Brier) <b>${a.brier.toFixed(3)}</b>, lower is better; 0.25 = coin flip. ` : ""}Scored against predictions sealed in <span class="mono">${esc(m.scout_run_id)}</span> before you decided.</span></div></div>
       <div class="banner info"><div class="big">${moves.length + emails.length}</div><div><b>Actions executed</b><br><span class="small">${moves.length} deal-board moves · ${emails.length} intro emails drafted to the outbox (not sent)</span></div></div>
     </div>
     <div class="card" style="padding:0"><table><thead><tr><th>#</th><th>Company</th><th>Agent predicted</th><th>You decided</th><th>Agent p(pick)</th><th>Final action</th></tr></thead><tbody>
@@ -143,7 +162,8 @@ async function renderDecided(r) {
 }
 
 $("#btn-scout").onclick = async () => {
-  try { const runId = await runJob("Scouting a new round", "/api/scout", {n: +$("#scout-n").value || 10}); await loadRounds(runId); }
+  const thesis = $("#thesis-text").value.trim();
+  try { const runId = await runJob(thesis ? "Interpreting your thesis and scouting" : "Scouting a new round", "/api/scout", {n: +$("#scout-n").value || 10, thesis: thesis || null}); await loadRounds(runId); }
   catch (e) { alert(e.message); }
 };
 
@@ -198,7 +218,7 @@ async function loadLearned() {
       <div class="banner ${remaining ? "warn" : "ok"}"><div class="big">${L.model.n_decisions}</div><div><b>decisions learned from</b> (${L.model.n_picks} picks)<br>
         <span class="small">${remaining ? `The agent defers to you until it has ${L.autonomy.min_decisions_before_auto_act} decisions (${remaining} to go), and always below ${pct(L.autonomy.auto_act_if_confidence)} confidence.` : `Autonomy unlocked: it acts alone when ≥ ${pct(L.autonomy.auto_act_if_confidence)} confident, and queues everything else for you.`}</span></div></div>
       <div class="card"><h3>Agreement with you, round by round</h3>${L.history.length ? L.history.map(h => `
-        <div class="small">Round ${h.round_no}: <b>${h.decisions_matched}/${h.total}</b> decisions matched · you picked ${h.top_k_overlap} of its top ${h.top_k}</div>
+        <div class="small">Round ${h.round_no}: <b>${h.decisions_matched}/${h.total}</b> decisions matched · you picked ${h.top_k_overlap} of its top ${h.top_k}${h.brier != null ? ` · calibration ${h.brier.toFixed(3)}` : ""}</div>
         <div class="bar" style="margin:4px 0 10px"><i style="width:${100 * h.decisions_matched / h.total}%"></i></div>`).join("") : "<span class='muted'>No decided rounds yet.</span>"}</div>
     </div>
     <div class="card"><h3>In plain words</h3>${L.summary.length ? `<ul>${L.summary.map(s => `<li>${esc(s)}</li>`).join("")}</ul>` : "<span class='muted'>Ranking purely by the stated thesis until you decide a round.</span>"}</div>

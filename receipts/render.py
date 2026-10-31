@@ -136,6 +136,22 @@ def render_round(meta: dict, candidates: list[dict], facts: dict[str, dict]) -> 
                  f" ({model['n_picks']} picks)  ")
     lines.append(f"**Predictions sealed** in ledger entry #{meta['predictions_seq']} before any human decision, so the agreement score "
                  "computed after you decide cannot be edited.  ")
+    if meta.get("thesis_request"):
+        tr = meta["thesis_request"]
+        lines.append(f"**Thesis requested:** “{tr['text']}” (interpreted by `{tr['model']}`; every filter value validated in code)  ")
+    if meta.get("thesis"):
+        t = meta["thesis"]
+        parts = [f"industries {', '.join(t.get('sectors', []))}", f"HQ {', '.join(t.get('hq_countries', []))}",
+                 f"team {t['headcount'][0]}–{t['headcount'][1]}", f"rounds {', '.join(t.get('last_round', []))}"]
+        if t.get("raised_since"):
+            parts.append(f"raised since {t['raised_since']}")
+        if t.get("description_keywords"):
+            parts.append(f"description mentions {' or '.join(t['description_keywords'])}")
+        lines.append(f"**Search filters used:** {'; '.join(parts)}  ")
+    if meta.get("relaxed"):
+        lines.append(f"**Relaxed to find enough companies:** {'; '.join(meta['relaxed'])}  ")
+    if meta.get("thesis_request") and meta["thesis_request"].get("unmapped"):
+        lines.append(f"**Not used as filters (judge these yourself):** {'; '.join(meta['thesis_request']['unmapped'])}  ")
     lines.append("")
     lines.append("| # | Company | Team | Growth YoY | Last round | Open roles (eng) | p(you pick) | Agent | Why |")
     lines.append("|---|---|---|---|---|---|---|---|---|")
@@ -176,6 +192,8 @@ def render_decision(meta: dict, decisions: list[dict], agreement: dict, learned:
     lines.append("")
     lines.append(f"- Agent's sealed pick/reject predictions matched **{agreement['decisions_matched']} of {agreement['total']}** of your decisions.")
     lines.append(f"- Of the agent's top {agreement['top_k']} ranked companies, you picked **{agreement['top_k_overlap']}**.")
+    if agreement.get("brier") is not None:
+        lines.append(f"- Calibration (Brier score): **{agreement['brier']:.3f}**; lower is better, 0.25 is what always saying 50% scores.")
     lines.append("")
     lines.append("| # | Company | Agent predicted | You decided | Agent p(pick) |")
     lines.append("|---|---|---|---|---|")

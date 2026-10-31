@@ -49,6 +49,7 @@ def main(argv=None):
     p_sc = sub.add_parser("scout", help="scout new companies matching strategy/STRATEGY.md and seal predictions")
     p_sc.add_argument("--n", type=int, default=10, help="companies per round (default 10)")
     p_sc.add_argument("--round", type=int, help="round number (default: next)")
+    p_sc.add_argument("--thesis", help='free-text thesis for this round, e.g. "Series A devtools in India"')
 
     p_de = sub.add_parser("decide", help="record your picks for a scouting round; the agent scores itself and learns")
     p_de.add_argument("--round", type=int, required=True)
@@ -69,7 +70,7 @@ def main(argv=None):
         from .scout import scout
         from .strategy import load_strategy
         strategy, text = load_strategy()
-        scout(strategy, text, n=args.n, round_no=args.round)
+        scout(strategy, text, n=args.n, round_no=args.round, thesis_text=args.thesis)
     elif args.cmd == "decide":
         from .decide import decide
         from .strategy import load_strategy

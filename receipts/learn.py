@@ -117,5 +117,6 @@ def agreement(predictions: list[dict], picked_ids: set[int]) -> dict:
     k = len(picked_ids)
     top_k = [p["company_id"] for p in sorted(predictions, key=lambda p: -p["probability"])[:k]]
     overlap = len(set(top_k) & picked_ids)
+    brier = round(sum((p["probability"] - (1.0 if p["company_id"] in picked_ids else 0.0)) ** 2 for p in predictions) / total, 4) if total else None
     return {"decisions_matched": same, "total": total, "accuracy": round(same / total, 3) if total else None,
-            "top_k": k, "top_k_overlap": overlap}
+            "top_k": k, "top_k_overlap": overlap, "brier": brier}

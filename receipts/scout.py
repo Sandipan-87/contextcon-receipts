@@ -41,7 +41,7 @@ def new_run(kind: str) -> tuple[str, "Ledger"]:
     return run_id, Ledger(run_dir, run_id, previous_head=prev)
 
 
-def scout(strategy: dict, strategy_text: str, n: int = 10, round_no: int | None = None) -> str:
+def scout(strategy: dict, strategy_text: str, n: int = 10, round_no: int | None = None, thesis_text: str | None = None) -> str:
     conn = board.connect()
     if round_no is None:
         row = conn.execute("SELECT MAX(round_no) AS r FROM deals WHERE source = 'scout'").fetchone()
@@ -60,23 +60,37 @@ def scout(strategy: dict, strategy_text: str, n: int = 10, round_no: int | None 
 
     client = CrustdataClient(ledger)
     facts = FactStore()
+    thesis_request = None
+    if thesis_text and thesis_text.strip():
+        from .thesis import interpret
+        interp = interpret(thesis_text, client, strategy["thesis"])
+        strategy = {**strategy, "thesis": interp["thesis"]}
+        thesis_request = {"text": interp["text"], "model": interp["model"], "unmapped": interp["mapping"]["unmapped"],
+                          "notes": interp["mapping"]["notes"], "industries": interp["mapping"]["industries"]}
+        ledger.append("thesis_request", {**thesis_request, "proposed": interp["mapping"]["proposed"], "filters": interp["thesis"]})
     thesis = strategy["thesis"]
 
     trace.step(f"Scouting {n} new companies matching the thesis")
     seen = board.seen_company_ids(conn)
-    search = client.post("/company/search", {
-        "filters": {"op": "and", "conditions": [
-            {"field": "taxonomy.professional_network_industry", "type": "in", "value": thesis["sectors"]},
-            {"field": "locations.country", "type": "in", "value": thesis["hq_countries"]},
-            {"field": "headcount.total", "type": "=>", "value": thesis["headcount"][0]},
-            {"field": "headcount.total", "type": "=<", "value": thesis["headcount"][1]},
-            {"field": "funding.last_round_type", "type": "in", "value": thesis["last_round"]},
-            *([{"field": "funding.last_fundraise_date", "type": "=>", "value": thesis["raised_since"]}] if thesis.get("raised_since") else []),
-        ]},
-        "sorts": [{"field": "funding.last_fundraise_date", "order": "desc"}],
-        "limit": min(100, n + len(seen) + 5),
-        "fields": ["crustdata_company_id", "basic_info.name", "basic_info.primary_domain", "locations.country"],
-    }, "thesis search")
+    relaxed = []
+    for attempt, (variant, note) in enumerate(relaxations(thesis)):
+        if note:
+            relaxed.append(note)
+            trace.warn(f"too few new matches; relaxing: {note}")
+            ledger.append("decision", {"question": "Too few new companies match; relax the search?", "status": "RELAXED",
+                                       "chosen": note, "rationale": "fewer new matches than requested; relax the least essential filter first",
+                                       "candidates": [], "evidence_receipts": [search.seq]})
+        search = client.post("/company/search", {
+            "filters": {"op": "and", "conditions": search_conditions(variant)},
+            "sorts": [{"field": "funding.last_fundraise_date", "order": "desc"}],
+            "limit": min(100, n + len(seen) + 5),
+            "fields": ["crustdata_company_id", "basic_info.name", "basic_info.primary_domain", "locations.country"],
+        }, "thesis search" if not note else f"search, relaxed: {note}")
+        new = [c for c in search.data.get("companies", []) if c["crustdata_company_id"] not in seen]
+        if len(new) >= min(n, 3):
+            break
+    thesis = variant
+    strategy = {**strategy, "thesis": thesis}  # the relaxed thesis is the one in force (recorded in meta)
     picked = []
     for i, c in enumerate(search.data.get("companies", [])):
         if c["crustdata_company_id"] not in seen and len(picked) < n:
@@ -84,7 +98,8 @@ def scout(strategy: dict, strategy_text: str, n: int = 10, round_no: int | None 
     trace.info(f"{search.data.get('total_count')} companies match the thesis; {len(picked)} new ones selected "
                f"({len(seen)} already on the deal board skipped)")
     if not picked:
-        raise SystemExit("no new companies found for this thesis")
+        raise SystemExit(f"No new companies match these filters ({search.data.get('total_count')} total, all already on the board "
+                         "or none at all). Try a broader thesis: fewer keywords, more countries or rounds.")
 
     ids = [c["crustdata_company_id"] for _, c in picked]
     trace.step("Gathering receipt-backed facts")
@@ -202,6 +217,7 @@ def scout(strategy: dict, strategy_text: str, n: int = 10, round_no: int | None 
             intro_email(runner, c, because)
 
     meta = {"kind": "scout", "run_id": run_id, "round_no": round_no, "as_of": as_of, "model": model,
+            "thesis": thesis, "thesis_request": thesis_request, "relaxed": relaxed,
             "strategy_hash": sha256_hex(strategy_text.encode("utf-8")), "credits_spent": round(client.credits_spent, 3),
             "predictions_seq": commit["seq"]}
     _write(run_dir / "meta.json", meta)
@@ -220,6 +236,42 @@ def scout(strategy: dict, strategy_text: str, n: int = 10, round_no: int | None 
     trace.info(f"round report: {run_dir / 'report.md'}")
     trace.info(f"now decide:  python -m receipts decide --round {round_no} --pick 1,4,7   (numbers from the table)")
     return run_id
+
+
+def search_conditions(thesis: dict) -> list[dict]:
+    return [
+        {"field": "taxonomy.professional_network_industry", "type": "in", "value": thesis["sectors"]},
+        {"field": "locations.country", "type": "in", "value": thesis["hq_countries"]},
+        {"field": "headcount.total", "type": "=>", "value": thesis["headcount"][0]},
+        {"field": "headcount.total", "type": "=<", "value": thesis["headcount"][1]},
+        {"field": "funding.last_round_type", "type": "in", "value": thesis["last_round"]},
+        *([{"field": "funding.last_fundraise_date", "type": "=>", "value": thesis["raised_since"]}] if thesis.get("raised_since") else []),
+        *([{"op": "or", "conditions": [{"field": "basic_info.description", "type": "(.)", "value": k}
+                                       for k in thesis["description_keywords"]]}] if thesis.get("description_keywords") else []),
+    ]
+
+
+def relaxations(thesis: dict):
+    """The exact thesis first, then progressively looser versions (least essential filter first).
+    Industry, country and the rulebook's headcount range are never relaxed."""
+    yield thesis, None
+    current = dict(thesis)
+    keywords = current.get("description_keywords") or []
+    words = [w for k in keywords for w in k.split() if len(w) >= 4]
+    if keywords and words and words != keywords:
+        current = {**current, "description_keywords": words}
+        yield current, f"description keywords split into single words ({', '.join(words)})"
+    if current.get("description_keywords"):
+        current = {k: v for k, v in current.items() if k != "description_keywords"}
+        yield current, "dropped the description-keyword filter"
+    if current.get("raised_since"):
+        current = {k: v for k, v in current.items() if k != "raised_since"}
+        yield current, "dropped the 'raised since' recency filter"
+    neighbours = {"seed": ["pre_seed", "series_a"], "series_a": ["seed", "series_b"], "series_b": ["series_a", "series_c"]}
+    widened = sorted(set(current["last_round"]) | {r for x in current["last_round"] for r in neighbours.get(x, [])})
+    if widened != sorted(current["last_round"]):
+        current = {**current, "last_round": widened}
+        yield current, f"widened rounds to neighbouring stages ({', '.join(widened)})"
 
 
 def predicted_pick_count(model: dict, strategy: dict, n: int) -> int:

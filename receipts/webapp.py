@@ -84,6 +84,7 @@ def job_status(job_id: str, since: int = 0):
 
 class ScoutIn(BaseModel):
     n: int = 10
+    thesis: str | None = None
 
 
 class DecideIn(BaseModel):
@@ -105,7 +106,7 @@ class VerifyIn(BaseModel):
 def api_scout(body: ScoutIn):
     from .scout import scout
     strategy, text = load_strategy()
-    return {"job": start_job("scout", lambda: scout(strategy, text, n=max(3, min(25, body.n))))}
+    return {"job": start_job("scout", lambda: scout(strategy, text, n=max(3, min(25, body.n)), thesis_text=body.thesis))}
 
 
 @app.post("/api/decide")
