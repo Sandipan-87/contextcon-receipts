@@ -26,4 +26,4 @@
 ## If something breaks live
 - **API slow:** responses are cached by request hash, so re-running the same command replays from cache with no extra credits.
 - **LLM down:** the agent falls back to the rule-based extractor and email templates, and says so in the trace.
-- **minimax-m3 returns HTTP 402** (Ollama plan): the agent uses `gemma4:31b`. Add Ollama credits to use minimax.
+- **LLM:** `beam` (free) is used first, then `gemma4:31b`. `minimax-m3` returns HTTP 402 on the free plan; add Ollama credits and set `OLLAMA_MODELS=minimax-m3,beam` to use it.

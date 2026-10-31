@@ -31,7 +31,7 @@ None of it is auditable afterwards.
 ## Quick start
 ```bash
 pip install -r requirements.txt pyyaml numpy
-cp .env.example .env              # CRUSTDATA_API_KEY; OLLAMA_API_KEY optional (minimax-m3, falls back to gemma4:31b)
+cp .env.example .env              # CRUSTDATA_API_KEY; OLLAMA_API_KEY optional (beam, falls back to gemma4:31b)
 
 python -m receipts scout                      # round of 10 thesis-fit companies, predictions sealed
 python -m receipts decide --round 1 --pick 1,4,5   # your real choices; agent scores itself and learns
@@ -83,7 +83,7 @@ python -m receipts tamper last && python -m receipts verify last              # 
 **Limitation:** the usage log proves each call happened with those parameters, but it doesn't store response bodies. Publish or commit the head hash when sharing results.
 
 ## LLM use (Ollama)
-The LLM handles claim extraction from pitches and the wording of drafted emails. Models are tried in order: `OLLAMA_MODELS` (default `minimax-m3,gemma4:31b`). A model the account can't use (e.g. HTTP 402) is skipped, and the model that actually ran is recorded in the ledger. If no LLM is available, a rule-based extractor and email templates take over. Verification never uses an LLM.
+The LLM handles claim extraction from pitches and the wording of drafted emails. Models are tried in order: `OLLAMA_MODELS` (default `beam,gemma4:31b`, both on the free Ollama plan; `minimax-m3` needs Ollama credits). A model the account can't use (e.g. HTTP 402) is skipped, and the model that actually ran is recorded in the ledger. If no LLM is available, a rule-based extractor and email templates take over. Verification never uses an LLM.
 
 ## As an MCP server
 Any MCP client (Claude Code, Claude Desktop, …) can use the same rulebook, receipts and signed trail:

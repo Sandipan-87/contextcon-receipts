@@ -1,6 +1,6 @@
 """LLM access through Ollama (cloud API with OLLAMA_API_KEY, or a local daemon).
 
-Models are tried in order (OLLAMA_MODELS, default "minimax-m3,gemma4:31b"): a model the account
+Models are tried in order (OLLAMA_MODELS, default "beam,gemma4:31b"; put minimax-m3 first once the Ollama account has credits): a model the account
 cannot use (HTTP 402/404) is skipped, so the agent keeps working, and the model that actually
 answered is returned so the run can record it in the ledger.
 """
@@ -25,7 +25,7 @@ _UNAVAILABLE: set[str] = set()  # models the account cannot use, skipped for the
 
 
 def models() -> list[str]:
-    return [m.strip() for m in (os.environ.get("OLLAMA_MODELS") or "minimax-m3,gemma4:31b").split(",") if m.strip()]
+    return [m.strip() for m in (os.environ.get("OLLAMA_MODELS") or "beam,gemma4:31b").split(",") if m.strip()]
 
 
 def available() -> bool:
