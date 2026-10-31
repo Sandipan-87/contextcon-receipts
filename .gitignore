@@ -1,0 +1,25 @@
+# secrets
+.env
+*.key
+keys/
+
+# runs (keep only the committed demo run)
+runs/*
+!runs/.gitkeep
+!runs/demo/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# local API response cache
+.cache/

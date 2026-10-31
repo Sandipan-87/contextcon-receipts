@@ -1,0 +1,5 @@
+TEST FIXTURE written by the team. Not sent by Mercury. Three claims are deliberately false.
+
+Hi! I'm Immad Akhund, CEO of Mercury Technologies. We are a fintech founded in 2017 and we are now a team of 3,000 people.
+We just closed a $200M Series D led by Accel. Our CTO Max previously worked at Google before joining us.
+We have reached $500M ARR and we are hiring heavily in engineering.
