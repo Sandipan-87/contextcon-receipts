@@ -87,6 +87,10 @@ class ScoutIn(BaseModel):
     thesis: str | None = None
 
 
+class AnalyzeIn(BaseModel):
+    query: str
+
+
 class DecideIn(BaseModel):
     round_no: int
     picks: list[int]
@@ -107,6 +111,15 @@ def api_scout(body: ScoutIn):
     from .scout import scout
     strategy, text = load_strategy()
     return {"job": start_job("scout", lambda: scout(strategy, text, n=max(3, min(25, body.n)), thesis_text=body.thesis))}
+
+
+@app.post("/api/analyze")
+def api_analyze(body: AnalyzeIn):
+    from .scout import scout
+    if len(body.query.strip()) < 2:
+        raise HTTPException(400, "Enter a company name or website.")
+    strategy, text = load_strategy()
+    return {"job": start_job("analyze", lambda: scout(strategy, text, n=1, company_query=body.query))}
 
 
 @app.post("/api/decide")
@@ -172,7 +185,8 @@ def api_runs():
             continue
         meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
         kind = meta.get("kind", "pitch")
-        title = {"scout": f"Scouting round {meta.get('round_no')}", "decide": f"Your decisions, round {meta.get('round_no')}",
+        title = {"scout": (f"Company analysis: {meta['single_company']}" if meta.get("single_company")
+                           else f"Scouting round {meta.get('round_no')}"), "decide": f"Your decisions, round {meta.get('round_no')}",
                  "pitch": f"Pitch: {meta.get('resolution', {}).get('name') or meta.get('company_mention') or 'unknown'}"}[kind]
         runs.append({"run_id": d.name, "kind": kind, "title": title, "mtime": (d / "head.sig").stat().st_mtime,
                      "round_no": meta.get("round_no"), "decision": (meta.get("decision") or {}).get("decision")})

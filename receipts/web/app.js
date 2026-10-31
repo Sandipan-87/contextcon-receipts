@@ -85,7 +85,7 @@ async function loadRounds(selectRunId) {
   rounds = await api("/api/rounds");
   if (!rounds.length) { $("#round-tabs").innerHTML = ""; $("#round-view").innerHTML = `<div class="empty card">No rounds yet. Click “Scout a new round”.</div>`; return; }
   activeRound = rounds.find(r => r.run_id === selectRunId) || rounds.find(r => r.run_id === activeRound?.run_id) || rounds[0];
-  $("#round-tabs").innerHTML = rounds.map(r => `<button class="${r.run_id === activeRound.run_id ? "on" : ""}" data-run="${r.run_id}">Round ${r.round_no} ${r.decided_by ? "✓" : "· awaiting you"}</button>`).join("");
+  $("#round-tabs").innerHTML = rounds.map(r => `<button class="${r.run_id === activeRound.run_id ? "on" : ""}" data-run="${r.run_id}">${r.title.startsWith("Company analysis") ? esc(r.title.replace("Company analysis: ", "🔎 ")) : "Round " + r.round_no} ${r.decided_by ? "✓" : "· awaiting you"}</button>`).join("");
   document.querySelectorAll("#round-tabs button").forEach(b => b.onclick = () => { activeRound = rounds.find(r => r.run_id === b.dataset.run); loadRounds(activeRound.run_id); });
   activeRound.decided_by ? renderDecided(activeRound) : renderRound(activeRound);
 }
@@ -94,7 +94,7 @@ async function renderRound(r) {
   const run = await api(`/api/run/${r.run_id}`);
   const m = run.meta.model;
   $("#round-view").innerHTML = `
-    <div class="banner info"><div class="big">${run.candidates.length}</div><div><b>Round ${r.round_no}: companies matching your thesis, newest fundraises first.</b><br>
+    <div class="banner info"><div class="big">${run.candidates.length}</div><div><b>${run.meta.single_company ? `Single-company analysis: “${esc(run.meta.single_company)}”, checked against your thesis and learned preferences.` : `Round ${r.round_no}: companies matching your thesis, newest fundraises first.`}</b><br>
       <span class="small">The agent has learned from <b>${m.n_decisions}</b> of your decisions. Its predictions were sealed in the signed ledger before you see this page.
       <label style="margin-left:10px"><input type="checkbox" id="reveal"> reveal the agent's sealed prediction (pick blind for a fair score)</label></span></div></div>
     ${thesisBox(run.meta)}
@@ -171,6 +171,13 @@ async function renderDecided(r) {
       <div class="row gap"><button class="primary" onclick="document.getElementById('btn-scout').click()">Scout the next round with what it learned</button>
       <button onclick="show('outbox')">See drafted emails</button><button onclick="show('board')">See deal board</button></div></div>`;
 }
+
+$("#btn-analyze").onclick = async () => {
+  const q = $("#analyze-q").value.trim();
+  if (!q) return alert("Enter a company name or website.");
+  try { const runId = await runJob(`Analysing ${q}`, "/api/analyze", {query: q}); await loadRounds(runId); }
+  catch (e) { alert(e.message); }
+};
 
 $("#btn-scout").onclick = async () => {
   const thesis = $("#thesis-text").value.trim();

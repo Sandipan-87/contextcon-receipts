@@ -131,7 +131,9 @@ REC_ICONS = {"ADVANCE": "🟢", "PASS": "🔴", "NEEDS_HUMAN": "🟡"}
 
 def render_round(meta: dict, candidates: list[dict], facts: dict[str, dict]) -> str:
     model = meta["model"]
-    lines = [f"# Scouting round {meta['round_no']}", ""]
+    title = (f"# Single-company analysis: {candidates[0]['name']} (round {meta['round_no']})" if meta.get("single_company")
+             else f"# Scouting round {meta['round_no']}")
+    lines = [title, ""]
     lines.append(f"**Run:** `{meta['run_id']}` · as of {meta['as_of']} · model trained on {model['n_decisions']} of your decisions"
                  f" ({model['n_picks']} picks)  ")
     lines.append(f"**Predictions sealed** in ledger entry #{meta['predictions_seq']} before any human decision, so the agreement score "

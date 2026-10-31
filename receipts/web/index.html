@@ -35,6 +35,12 @@
       <textarea id="thesis-text" class="thesis" placeholder="e.g. Series A developer-tools companies in India with strong engineering hiring"></textarea>
       <div class="small muted">The agent turns this into Crustdata filters. Every value is validated in code (industries checked against Crustdata), and anything it can't search on is shown to you, never invented. Guardrails and autonomy limits from the rulebook still apply.</div>
     </div>
+    <div class="card thesis-card row gap">
+      <b>Or analyse one company</b>
+      <input id="analyze-q" placeholder="Company name or website, e.g. razorpay.com" style="flex:1;max-width:420px">
+      <button id="btn-analyze" class="primary">Analyse company</button>
+      <span class="small muted">Checked against your thesis and scored with your learned preferences. You can then pick or reject it, and the agent learns.</span>
+    </div>
     <div class="tabs" id="round-tabs"></div>
     <div id="round-view"></div>
   </section>

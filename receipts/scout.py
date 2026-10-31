@@ -2,6 +2,7 @@
 -> autonomous actions within STRATEGY.md limits (everything else is queued for the human)."""
 
 import json
+import re
 from datetime import datetime, timezone
 
 from . import board, learn, trace
@@ -42,7 +43,9 @@ def new_run(kind: str) -> tuple[str, "Ledger"]:
     return run_id, Ledger(run_dir, run_id, previous_head=prev)
 
 
-def scout(strategy: dict, strategy_text: str, n: int = 10, round_no: int | None = None, thesis_text: str | None = None) -> str:
+def scout(strategy: dict, strategy_text: str, n: int = 10, round_no: int | None = None, thesis_text: str | None = None,
+          company_query: str | None = None) -> str:
+    """company_query: analyse one named company (name or website) instead of searching the thesis."""
     conn = board.connect()
     if round_no is None:
         row = conn.execute("SELECT MAX(round_no) AS r FROM deals WHERE source = 'scout'").fetchone()
@@ -71,36 +74,41 @@ def scout(strategy: dict, strategy_text: str, n: int = 10, round_no: int | None 
         ledger.append("thesis_request", {**thesis_request, "proposed": interp["mapping"]["proposed"], "filters": interp["thesis"]})
     thesis = strategy["thesis"]
 
-    trace.step(f"Scouting {n} new companies matching the thesis")
-    seen = board.seen_company_ids(conn)
-    relaxed = []
-    for attempt, (variant, note) in enumerate(relaxations(thesis)):
-        if note:
-            relaxed.append(note)
-            trace.warn(f"too few new matches; relaxing: {note}")
-            ledger.append("decision", {"question": "Too few new companies match; relax the search?", "status": "RELAXED",
-                                       "chosen": note, "rationale": "fewer new matches than requested; relax the least essential filter first",
-                                       "candidates": [], "evidence_receipts": [search.seq]})
-        search = client.post("/company/search", {
-            "filters": {"op": "and", "conditions": search_conditions(variant)},
-            "sorts": [{"field": "funding.last_fundraise_date", "order": "desc"}],
-            "limit": min(100, n + len(seen) + 5),
-            "fields": ["crustdata_company_id", "basic_info.name", "basic_info.primary_domain", "locations.country"],
-        }, "thesis search" if not note else f"search, relaxed: {note}")
-        new = [c for c in search.data.get("companies", []) if c["crustdata_company_id"] not in seen]
-        if len(new) >= min(n, 3):
-            break
-    thesis = variant
-    strategy = {**strategy, "thesis": thesis}  # the relaxed thesis is the one in force (recorded in meta)
-    picked = []
-    for i, c in enumerate(search.data.get("companies", [])):
-        if c["crustdata_company_id"] not in seen and len(picked) < n:
-            picked.append((i, c))
-    trace.info(f"{search.data.get('total_count')} companies match the thesis; {len(picked)} new ones selected "
-               f"({len(seen)} already on the deal board skipped)")
-    if not picked:
-        raise SystemExit(f"No new companies match these filters ({search.data.get('total_count')} total, all already on the board "
-                         "or none at all). Try a broader thesis: fewer keywords, more countries or rounds.")
+    relaxed, search, single = [], None, None
+    if company_query and company_query.strip():
+        single = _resolve_single(client, ledger, company_query.strip())
+        picked = [(0, single)]
+    else:
+        trace.step(f"Scouting {n} new companies matching the thesis")
+        seen = board.seen_company_ids(conn)
+        relaxed = []
+        for attempt, (variant, note) in enumerate(relaxations(thesis)):
+            if note:
+                relaxed.append(note)
+                trace.warn(f"too few new matches; relaxing: {note}")
+                ledger.append("decision", {"question": "Too few new companies match; relax the search?", "status": "RELAXED",
+                                           "chosen": note, "rationale": "fewer new matches than requested; relax the least essential filter first",
+                                           "candidates": [], "evidence_receipts": [search.seq]})
+            search = client.post("/company/search", {
+                "filters": {"op": "and", "conditions": search_conditions(variant)},
+                "sorts": [{"field": "funding.last_fundraise_date", "order": "desc"}],
+                "limit": min(100, n + len(seen) + 5),
+                "fields": ["crustdata_company_id", "basic_info.name", "basic_info.primary_domain", "locations.country"],
+            }, "thesis search" if not note else f"search, relaxed: {note}")
+            new = [c for c in search.data.get("companies", []) if c["crustdata_company_id"] not in seen]
+            if len(new) >= min(n, 3):
+                break
+        thesis = variant
+        strategy = {**strategy, "thesis": thesis}  # the relaxed thesis is the one in force (recorded in meta)
+        picked = []
+        for i, c in enumerate(search.data.get("companies", [])):
+            if c["crustdata_company_id"] not in seen and len(picked) < n:
+                picked.append((i, c))
+        trace.info(f"{search.data.get('total_count')} companies match the thesis; {len(picked)} new ones selected "
+                   f"({len(seen)} already on the deal board skipped)")
+        if not picked:
+            raise SystemExit(f"No new companies match these filters ({search.data.get('total_count')} total, all already on the board "
+                             "or none at all). Try a broader thesis: fewer keywords, more countries or rounds.")
 
     ids = [c["crustdata_company_id"] for _, c in picked]
     trace.step("Gathering receipt-backed facts")
@@ -134,7 +142,7 @@ def scout(strategy: dict, strategy_text: str, n: int = 10, round_no: int | None 
         cid = c["crustdata_company_id"]
         idx = by_id.get(cid)
         refs = {"job_buckets": job_fact.id if job_fact else None, "eng_buckets": eng_fact.id if eng_fact else None}
-        country_fact = facts.add(search, f"/companies/{search_idx}/locations/country", "HQ country")
+        country_fact = facts.add(search, f"/companies/{search_idx}/locations/country", "HQ country") if search else None
         refs["country"] = country_fact.id if country_fact else None
         if idx is not None:
             base = f"/{idx}/matches/0/company_data"
@@ -191,7 +199,7 @@ def scout(strategy: dict, strategy_text: str, n: int = 10, round_no: int | None 
         trace.info(f"{icon} {rank:>2}. {name} · p(pick) {pred['probability']:.2f} · {rec}"
                    f"{' (auto)' if auto else ' (queued for you)'} · {', '.join(why) or 'no strong signal'}")
 
-    k = predicted_pick_count(model, strategy, len(candidates))
+    k = predicted_pick_count(model, strategy, len(candidates)) if not single else int(candidates[0]["probability"] >= 0.5)
     for c in sorted(candidates, key=lambda c: (-c["probability"], c["n"]))[:k]:
         c["predicted_pick"] = True
     trace.info(f"agent predicts you will pick {k} of {len(candidates)} (pick rate "
@@ -223,6 +231,7 @@ def scout(strategy: dict, strategy_text: str, n: int = 10, round_no: int | None 
 
     meta = {"kind": "scout", "run_id": run_id, "round_no": round_no, "as_of": as_of, "model": model,
             "thesis": thesis, "thesis_request": thesis_request, "relaxed": relaxed,
+            **({"single_company": company_query.strip()} if single else {}),
             "strategy_hash": sha256_hex(strategy_text.encode("utf-8")), "credits_spent": round(client.credits_spent, 3),
             "predictions_seq": commit["seq"]}
     _write(run_dir / "meta.json", meta)
@@ -241,6 +250,20 @@ def scout(strategy: dict, strategy_text: str, n: int = 10, round_no: int | None 
     trace.info(f"round report: {run_dir / 'report.md'}")
     trace.info(f"now decide:  python -m receipts decide --round {round_no} --pick 1,4,7   (numbers from the table)")
     return run_id
+
+
+def _resolve_single(client, ledger, query: str) -> dict:
+    """Resolve one company the user named; refuse to guess when ambiguous."""
+    from .resolve import resolve_company
+    trace.step(f"Analysing one company: {query}")
+    is_domain = bool(re.fullmatch(r"(https?://)?(www\.)?[a-z0-9\-]+(\.[a-z0-9\-]+)+/?\S*", query.lower()))
+    res = resolve_company(client, ledger, mention=None if is_domain else query, domain=query if is_domain else None,
+                          founders=[], sector=None, claimed_founded=None, claimed_headcount=None)
+    if res.status != "RESOLVED":
+        options = "; ".join(f"{c['name']} ({c.get('domain') or 'no domain'})" for c in res.candidates[:5])
+        raise SystemExit(f"Could not identify '{query}' with confidence ({res.status}). "
+                         + (f"Did you mean one of: {options}? Enter the website instead." if options else "Try its website."))
+    return {"crustdata_company_id": res.company_id, "basic_info": {"name": res.name, "primary_domain": res.domain}}
 
 
 def search_conditions(thesis: dict) -> list[dict]:

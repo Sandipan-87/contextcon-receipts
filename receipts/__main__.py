@@ -51,6 +51,9 @@ def main(argv=None):
     p_sc.add_argument("--round", type=int, help="round number (default: next)")
     p_sc.add_argument("--thesis", help='free-text thesis for this round, e.g. "Series A devtools in India"')
 
+    p_an = sub.add_parser("analyze", help="analyse one company (name or website) against your strategy and learned preferences")
+    p_an.add_argument("company", help='e.g. "stripe.com" or "Razorpay"')
+
     p_de = sub.add_parser("decide", help="record your picks for a scouting round; the agent scores itself and learns")
     p_de.add_argument("--round", type=int, required=True)
     p_de.add_argument("--pick", required=True, help="comma-separated table numbers or names, e.g. 2,5,7")
@@ -71,6 +74,11 @@ def main(argv=None):
         from .strategy import load_strategy
         strategy, text = load_strategy()
         scout(strategy, text, n=args.n, round_no=args.round, thesis_text=args.thesis)
+    elif args.cmd == "analyze":
+        from .scout import scout
+        from .strategy import load_strategy
+        strategy, text = load_strategy()
+        scout(strategy, text, n=1, company_query=args.company)
     elif args.cmd == "decide":
         from .decide import decide
         from .strategy import load_strategy

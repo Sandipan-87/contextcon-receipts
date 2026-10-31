@@ -52,6 +52,7 @@ python -m receipts scout                      # round of 10 thesis-fit companies
 python -m receipts scout --thesis "Series A devtools in India"   # a never-seen thesis, typed in plain English
 python -m receipts decide --round 1 --pick 1,4,5   # your real choices; agent scores itself and learns
 python -m receipts scout                      # next round uses what it learned
+python -m receipts analyze razorpay.com      # analyse one company against your thesis + learned taste
 python -m receipts board                      # deal board
 python -m receipts learned                    # what it learned + agreement per round
 python -m receipts run --pitch fixtures/pitches/01_mercury_planted_lies.txt   # verify an inbound pitch
