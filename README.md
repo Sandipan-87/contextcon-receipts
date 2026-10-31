@@ -28,7 +28,22 @@ None of it is auditable afterwards.
 | Decide | Pick the companies you want (`decide --pick 2,5,7`) | Scores itself against its sealed predictions, executes your decisions, re-fits its model of your preferences, and explains what it learned | Agreement score, updated preferences |
 | Audit | `verify` any run, any time | Recomputes everything; no LLM involved | ✔ / ✘ |
 
-## Quick start
+## Web app (recommended for users and the demo)
+```bash
+python -m receipts.webapp        # then open http://127.0.0.1:8000
+```
+
+| Page | What you do there |
+|---|---|
+| **Deal board** | See every company by stage (Needs analyst / Partner meeting / Awaiting founder info / Passed). |
+| **Scout & decide** | Scout a round, tick the companies you'd pick (the agent's sealed prediction stays blurred so you can pick blind), submit, and see the agent's agreement score, the actions it executed, and what it learned. |
+| **Check a pitch** | Paste a pitch (or load an example) and watch the agent work live. Then see the verdicts, click any fact for its receipt, and see the decision, the actions taken, and the drafted email. |
+| **What it learned** | Agreement per round, your preferences in plain words, and the stated-vs-learned weights. |
+| **Outbox** | Drafted emails (never sent). |
+| **Audit trail** | Verify any run (optionally with Crustdata's usage-log witness), or run a tamper test on a copy. |
+| **Rulebook** | The rules the agent acts within. |
+
+## Quick start (CLI)
 ```bash
 pip install -r requirements.txt pyyaml numpy
 cp .env.example .env              # CRUSTDATA_API_KEY; OLLAMA_API_KEY optional (beam, falls back to gemma4:31b)

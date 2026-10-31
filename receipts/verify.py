@@ -21,11 +21,12 @@ from .facts import load_facts, resolve
 from .features import compute
 from .ledger import canonical_json, entry_hash, read_blob, read_ledger, sha256_hex, verify_signature
 from .render import render_decision, render_report, render_round
-from .trace import bad, console, info, ok
+from . import trace
+from .trace import bad, info, ok
 
 
 def verify_run(run_dir: Path, witness: bool = False) -> bool:
-    console.rule(f"[bold]verify {run_dir.name}")
+    trace.console.rule(f"[bold]verify {run_dir.name}")
     results = []
 
     def check(name: str, passed: bool, detail: str):
@@ -129,11 +130,11 @@ def verify_run(run_dir: Path, witness: bool = False) -> bool:
         results.append(_witness(entries))
 
     passed = all(results)
-    console.print()
+    trace.console.print()
     if passed:
-        console.print("[bold green]VERIFIED: every statement and action in this run traces to unaltered, signed receipts and rules.[/]")
+        trace.console.print("[bold green]VERIFIED: every statement and action in this run traces to unaltered, signed receipts and rules.[/]")
     else:
-        console.print("[bold red]FAILED: this run has been altered or does not reproduce. Do not rely on it.[/]")
+        trace.console.print("[bold red]FAILED: this run has been altered or does not reproduce. Do not rely on it.[/]")
     return passed
 
 

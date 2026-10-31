@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Receipts · deal screening you can verify</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<aside id="nav">
+  <div class="brand"><span class="logo">R</span><div><b>Receipts</b><small>verifiable deal screening</small></div></div>
+  <a data-page="board" class="active">▦ Deal board</a>
+  <a data-page="rounds">⌕ Scout &amp; decide</a>
+  <a data-page="pitch">✎ Check a pitch</a>
+  <a data-page="learned">◔ What it learned</a>
+  <a data-page="outbox">✉ Outbox</a>
+  <a data-page="audit">⛨ Audit trail</a>
+  <a data-page="rules">⚖ Rulebook</a>
+  <div class="navfoot">Crustdata identity graph · signed receipts · no LLM in verification</div>
+</aside>
+
+<main>
+  <section id="page-board" class="page active">
+    <header><h1>Deal board</h1><p>Every company the agent has scouted or screened, and where it stands. Stage changes are actions the agent executed under the rulebook, or your decisions.</p></header>
+    <div id="board" class="kanban"></div>
+  </section>
+
+  <section id="page-rounds" class="page">
+    <header class="row"><div><h1>Scout &amp; decide</h1>
+      <p>The agent scouts thesis-fit companies, scores them with what it has learned about you, and <b>seals its predictions</b> before you choose. You pick; it scores itself and learns.</p></div>
+      <div class="actions"><label>Companies <input id="scout-n" type="number" min="3" max="25" value="10"></label>
+        <button id="btn-scout" class="primary">Scout a new round</button></div></header>
+    <div class="tabs" id="round-tabs"></div>
+    <div id="round-view"></div>
+  </section>
+
+  <section id="page-pitch" class="page">
+    <header><h1>Check a pitch</h1><p>Paste an inbound pitch. The agent extracts every claim, resolves the company and people on Crustdata, checks each claim within the rulebook's margins, decides, and acts.</p></header>
+    <div class="card">
+      <div class="examples" id="examples"></div>
+      <textarea id="pitch-text" placeholder="Paste the founder's email or one-pager text…"></textarea>
+      <div class="row gap"><input id="pitch-domain" placeholder="Company website (optional), e.g. mercury.com">
+        <button id="btn-pitch" class="primary">Run diligence</button></div>
+    </div>
+    <div id="pitch-result"></div>
+  </section>
+
+  <section id="page-learned" class="page">
+    <header><h1>What it learned about you</h1><p>Learned only from your recorded picks and rejects, anchored on the stated thesis. Agreement is scored against predictions sealed <i>before</i> you decided.</p></header>
+    <div id="learned"></div>
+  </section>
+
+  <section id="page-outbox" class="page">
+    <header><h1>Outbox</h1><p>Emails the agent drafted. They are <b>never sent</b> (handbook rule 4): an analyst reviews and sends them.</p></header>
+    <div id="outbox"></div>
+  </section>
+
+  <section id="page-audit" class="page">
+    <header><h1>Audit trail</h1><p>Every run is a hash-chained, Ed25519-signed ledger. Verification recomputes everything from the raw API responses; the witness check asks Crustdata's own usage log.</p></header>
+    <div id="audit"></div>
+  </section>
+
+  <section id="page-rules" class="page">
+    <header><h1>Rulebook</h1><p>The agent acts on its own only inside these rules (<code>strategy/STRATEGY.md</code>). The full text is sealed into every run, and every action records the rule that allowed it.</p></header>
+    <div id="rules"></div>
+  </section>
+</main>
+
+<div id="console" class="hidden">
+  <div class="console-head"><span id="console-title">Agent at work</span><span id="console-status" class="pill">running</span>
+    <button id="console-close" class="ghost">Hide</button></div>
+  <pre id="console-log"></pre>
+</div>
+
+<div id="modal" class="hidden"><div class="modal-card"><button class="ghost close" id="modal-close">✕</button><div id="modal-body"></div></div></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

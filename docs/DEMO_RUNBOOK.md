@@ -5,6 +5,10 @@
 - **No human decisions have been made.** Your team must make the picks. Do not let anyone else, including the agent, make them; the agreement score is only meaningful if the picks are yours.
 - The Mercury pitch has been verified (`runs/run_*`); its follow-up email is drafted in `outbox/`.
 
+## Easiest: use the web app
+`python -m receipts.webapp`, then open http://127.0.0.1:8000. Every step below can be done from the UI:
+**Scout & decide** (tick picks, submit), **Check a pitch**, **What it learned**, **Audit trail** (Verify, + witness, Tamper test).
+
 ## Before recording (about 15 min)
 1. Open `runs/scout_*/report.md` (round 1). As a team, pick the companies you would genuinely take to a partner meeting, about half.
 2. `python -m receipts decide --round 1 --pick <numbers>` records your picks, scores the agent, and runs learning.
