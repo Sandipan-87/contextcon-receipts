@@ -27,7 +27,7 @@ flowchart TB
     V -- "results + proof" --> U
 ```
 
-**Request → Identify → Investigate (Crustdata) → Judge (code) → Decide (rulebook) → Act → Seal → Verify.** Your picks feed a learning loop that teaches the agent your taste. Full high-level design with component explanations: **[docs/HLD.md](docs/HLD.md)**.
+**Request → Identify → Investigate (Crustdata) → Judge (code) → Decide (rulebook) → Act → Seal → Verify.** Your picks feed a learning loop that teaches the agent your taste. More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## The manual work it replaces
 An analyst at a fund spends 1–2 hours per company:
@@ -149,13 +149,44 @@ Any MCP client (Claude Code, Claude Desktop, …) can use the same rulebook, rec
 | `deal_board` | Returns the current board. |
 
 ## Future work
-- **High-level design:** the full HLD, with our hand-drawn diagram and an explanation of every component and flow, is in **[docs/HLD.md](docs/HLD.md)**. The items below extend that design.
-- **Crustdata Watchers** on portfolio companies and decided deals: a change triggers a re-check and a field-level diff against the last signed snapshot.
-- **Founder signals as learned features.** Technical founder, repeat founder and big-tech background are shown today; they would become model features, with versioned feature sets so older runs still verify.
-- **External anchoring of the chain head** (a public timestamp or transparency log), so even the key holder can't rewrite history.
-- **Per-partner preference models** and **outcome feedback** (did the company raise again?) alongside the fund's taste.
-- **CRM and email integrations** (e.g. Affinity, Gmail) behind an approval step, and multi-user access with roles.
-- A sanity rule for very large companies, whose founder lists include many employees with "founder" in their job title.
+The next stage is designed in **[HLD.md](HLD.md)**: **PartnerMesh on Receipts**. Each partner of the fund gets an AI twin, with its own written manual and learned scorer. The twins place sealed bids in per-question prediction markets (raise / grow / shrink), and the market prices become one firm decision. Real outcomes then settle the markets, so partners who judge well gain influence. Receipts stays the base layer: scouting, receipt-backed facts, the signed ledger, rule-bounded actions and verification.
+
+```mermaid
+flowchart LR
+  subgraph Users
+    P[Partners] --- A[Analyst] --- AU[Auditor]
+  end
+  subgraph Interfaces
+    CLI[CLI<br/>partnermesh / receipts]
+    WEB[Web app<br/>FastAPI + JS]
+    MCP[MCP server]
+  end
+  subgraph Core["PartnerMesh on Receipts"]
+    PM[PartnerMesh layer<br/>partners · market · learning]
+    RC[Receipts base layer<br/>scout · facts · ledger · actions · verify]
+  end
+  subgraph External
+    CD[(Crustdata API<br/>company/person/job search & enrich,<br/>usage log)]
+    LLM[(Open-weight reasoning model<br/>gpt-oss-120b on Groq;<br/>Ollama fallback)]
+  end
+  subgraph Local["Local state"]
+    RUNS[(runs/: signed ledgers + blobs)]
+    BOARD[(deal board SQLite + outbox/)]
+    ST[(strategy/*.md, state/partners/*.json)]
+  end
+  Users --> Interfaces --> PM --> RC
+  RC --> CD
+  PM --> LLM
+  RC --> RUNS & BOARD
+  PM --> RUNS & ST
+```
+
+Highlights from [HLD.md](HLD.md):
+- **Two layers.** PartnerMesh never calls Crustdata or writes the deal board directly. It reads *sealed* Receipts rounds, writes its runs with Receipts' ledger, acts through Receipts' `ActionRunner`, and is verified by Receipts' `verify`.
+- **Decision mechanism.** An LMSR market maker gives bounded loss, prices that are probabilities, and influence capped by each partner's wallet. Wallets are per question, so a partner can be trusted on *grow* but discounted on *raise*.
+- **Learning from outcomes.** Settlement moves wealth to the partners who were right, the scorer takes an SGD step toward the outcome, and a lesson is appended to that partner's manual. A leakage-free backtest uses point-in-time features.
+- **Trust.** All bids are hash-committed before any market opens. Reasons must cite fact IDs, and the market replay is verified exactly.
+- **More items:** Crustdata Watchers for automatic settlement and re-checks, founder signals as learned features, anchoring signed run heads externally, and CRM/email integrations behind an approval step.
 
 ## Layout
 ```
