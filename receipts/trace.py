@@ -1,8 +1,11 @@
 """Live terminal trace so judges can watch every decision and call."""
 
+import os
+
 from rich.console import Console
 
-console = Console(highlight=False)
+# Under MCP (stdio), stdout carries the protocol, so the human-readable trace goes to stderr.
+console = Console(highlight=False, stderr=bool(os.environ.get("RECEIPTS_MCP")))
 
 
 def step(title: str) -> None:

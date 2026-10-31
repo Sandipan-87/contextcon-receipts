@@ -85,6 +85,19 @@ python -m receipts tamper last && python -m receipts verify last              # 
 ## LLM use (Ollama)
 The LLM handles claim extraction from pitches and the wording of drafted emails. Models are tried in order: `OLLAMA_MODELS` (default `minimax-m3,gemma4:31b`). A model the account can't use (e.g. HTTP 402) is skipped, and the model that actually ran is recorded in the ledger. If no LLM is available, a rule-based extractor and email templates take over. Verification never uses an LLM.
 
+## As an MCP server
+Any MCP client (Claude Code, Claude Desktop, …) can use the same rulebook, receipts and signed trail:
+`claude mcp add receipts -- python -m receipts.mcp_server` (or use the bundled `.mcp.json`).
+
+| Tool | What it does |
+|---|---|
+| `get_strategy` | Returns the rulebook. |
+| `check_pitch` | Verifies a pitch, decides, acts, and seals the run. |
+| `scout_round` | Scouts, scores, and seals predictions. |
+| `record_decisions` | Records the human's picks only, then scores and learns. |
+| `verify_run` | Deterministic re-verification, optionally with the witness check. |
+| `deal_board` | Returns the current board. |
+
 ## Layout
 ```
 strategy/   STRATEGY.md (the rulebook), LEARNED.md (generated)

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "receipts": {
+      "command": "python",
+      "args": ["-m", "receipts.mcp_server"]
+    }
+  }
+}
