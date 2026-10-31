@@ -27,7 +27,7 @@ flowchart TB
     V -- "results + proof" --> U
 ```
 
-**Request → Identify → Investigate (Crustdata) → Judge (code) → Decide (rulebook) → Act → Seal → Verify.** Your picks feed a learning loop that teaches the agent your taste. More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+**Request → Identify → Investigate (Crustdata) → Judge (code) → Decide (rulebook) → Act → Seal → Verify.** Your picks feed a learning loop that teaches the agent your taste. Full high-level design with component explanations: **[docs/HLD.md](docs/HLD.md)**.
 
 ## The manual work it replaces
 An analyst at a fund spends 1–2 hours per company:
@@ -147,6 +147,15 @@ Any MCP client (Claude Code, Claude Desktop, …) can use the same rulebook, rec
 | `record_decisions` | Records the human's picks only, then scores and learns. |
 | `verify_run` | Deterministic re-verification, optionally with the witness check. |
 | `deal_board` | Returns the current board. |
+
+## Future work
+- **High-level design:** the full HLD, with our hand-drawn diagram and an explanation of every component and flow, is in **[docs/HLD.md](docs/HLD.md)**. The items below extend that design.
+- **Crustdata Watchers** on portfolio companies and decided deals: a change triggers a re-check and a field-level diff against the last signed snapshot.
+- **Founder signals as learned features.** Technical founder, repeat founder and big-tech background are shown today; they would become model features, with versioned feature sets so older runs still verify.
+- **External anchoring of the chain head** (a public timestamp or transparency log), so even the key holder can't rewrite history.
+- **Per-partner preference models** and **outcome feedback** (did the company raise again?) alongside the fund's taste.
+- **CRM and email integrations** (e.g. Affinity, Gmail) behind an approval step, and multi-user access with roles.
+- A sanity rule for very large companies, whose founder lists include many employees with "founder" in their job title.
 
 ## Layout
 ```
