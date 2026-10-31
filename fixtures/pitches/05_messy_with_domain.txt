@@ -1,0 +1,5 @@
+TEST FIXTURE written by the team.
+
+hey!! quick intro -- we're the team behind stripe.com ...   founded in 2010,,  now 16,000 employees
+our CTO David previously at Google.
+   raised a total of $9B so far

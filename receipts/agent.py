@@ -166,12 +166,12 @@ def _gather_person(client, facts, refs, unavailable, company_id, person, role):
     role_re = ROLE_PATTERNS.get((role or "").upper()) if role else None
     first = person.split()[0].lower()
 
-    def title_at_company(p):
-        return "; ".join(j.get("title") or "" for j in (p.get("experience", {}).get("employment_details", {}).get("current") or [])
+    def title_at_company(p, which="current"):
+        return "; ".join(j.get("title") or "" for j in (p.get("experience", {}).get("employment_details", {}).get(which) or [])
                          if j.get("crustdata_company_id") == company_id)
 
-    def has_role(p):
-        return bool(role_re and re.search(role_re, title_at_company(p).lower()))
+    def has_role(p, which="current"):
+        return bool(role_re and re.search(role_re, title_at_company(p, which).lower()))
 
     def first_name_match(p):
         tokens = (p.get("basic_profile", {}).get("name") or "").lower().split()
@@ -186,11 +186,18 @@ def _gather_person(client, facts, refs, unavailable, company_id, person, role):
             "status": "RESOLVED", "chosen": p.get("crustdata_person_id"), "rationale": why,
             "candidates": candidates, "evidence_receipts": [receipt.seq],
         })
-        trace.ok(f"person {person!r} → {p['basic_profile']['name']} ({title_at_company(p) or which}) · {why}")
+        trace.ok(f"person {person!r} → {p['basic_profile']['name']} ({title_at_company(p, which) or which}) · {why}")
 
-    def summary(p):
-        return {"name": p.get("basic_profile", {}).get("name"), "title_at_company": title_at_company(p)}
+    def summary(p, which="current"):
+        return {"name": p.get("basic_profile", {}).get("name"), "title_at_company": title_at_company(p, which)}
 
+    def not_found(why, cands, receipts):
+        ledger.append("decision", {"question": f"Which person is {person!r}" + (f" ({role})" if role else "") + "?",
+                                   "status": "NOT_FOUND", "chosen": None, "rationale": why, "candidates": cands[:8],
+                                   "evidence_receipts": receipts})
+        trace.warn(f"person {person!r}: {why}")
+
+    full_name = " " in person.strip()
     try:
         r = client.post("/person/search", {"filters": {"op": "and", "conditions": [
             {"field": "basic_profile.name", "type": "(.)", "value": person},
@@ -203,41 +210,48 @@ def _gather_person(client, facts, refs, unavailable, company_id, person, role):
         role_hits = [i for i, p in enumerate(profiles) if has_role(p)]
         if role_hits:
             return choose(r, role_hits[0], f"name match holding the claimed role among {len(profiles)} name matches", cands)
-        if profiles and not role_re:
-            return choose(r, 0, "only name given; first name match", cands)
-        if len(profiles) == 1 and " " in person.strip():
-            return choose(r, 0, "unique full-name match (title differs from the claim)", cands)
+        if not role_re and profiles and (full_name or len(profiles) == 1):
+            return choose(r, 0, "name match at the company (no role claimed)", cands)
 
-        # Short or partial names ("Max" for "Maximilian"): list the leadership, match first name + role in code.
-        r2 = client.post("/person/search", {"filters": {"op": "and", "conditions": [
-            {"field": "experience.employment_details.current.company_id", "type": "=", "value": company_id},
-            {"field": "experience.employment_details.current.seniority_level", "type": "in",
-             "value": ["CXO", "Owner / Partner", "Vice President", "Director"]},
-        ]}, "limit": 50, "fields": PERSON_FIELDS}, "current leadership")
-        leaders = r2.data.get("profiles") or []
-        hits = [i for i, p in enumerate(leaders) if first_name_match(p)]
-        cands2 = cands + [summary(leaders[i]) for i in hits]
-        role_leaders = [i for i in hits if has_role(leaders[i])]
-        if role_leaders:
-            others = f"; {len(profiles)} other '{person}' match(es) do not hold this role" if profiles else ""
-            return choose(r2, role_leaders[0], f"first-name match in current leadership holding the claimed role{others}", cands2)
-        if profiles:
-            return choose(r, 0, "name match at the company, but nobody with this name holds the claimed role", cands2)
-        if len(hits) == 1:
-            return choose(r2, hits[0], "unique first-name match in current leadership", cands2)
+        receipts = [r.seq]
+        cands2 = list(cands)
+        if role_re:
+            # Short or partial names ("Max" for "Maximilian"): list the leadership, match first name + role in code.
+            r2 = client.post("/person/search", {"filters": {"op": "and", "conditions": [
+                {"field": "experience.employment_details.current.company_id", "type": "=", "value": company_id},
+                {"field": "experience.employment_details.current.seniority_level", "type": "in",
+                 "value": ["CXO", "Owner / Partner", "Vice President", "Director"]},
+            ]}, "limit": 50, "fields": PERSON_FIELDS}, "current leadership")
+            receipts.append(r2.seq)
+            leaders = r2.data.get("profiles") or []
+            hits = [i for i, p in enumerate(leaders) if first_name_match(p)]
+            cands2 += [summary(leaders[i]) for i in hits]
+            role_leaders = [i for i in hits if has_role(leaders[i])]
+            if role_leaders:
+                others = f"; {len(profiles)} other '{person}' match(es) at the company do not hold this role" if profiles else ""
+                return choose(r2, role_leaders[0], f"first-name match in current leadership holding the claimed role{others}", cands2)
 
+        # Not a current role holder: maybe they held it and left.
         r3 = client.post("/person/search", {"filters": {"op": "and", "conditions": [
             {"field": "basic_profile.name", "type": "(.)", "value": person},
             {"field": "experience.employment_details.past.company_id", "type": "=", "value": company_id},
-        ]}, "limit": 3, "fields": PERSON_FIELDS}, f"did {person!r} leave the company?")
+        ]}, "limit": 10, "fields": PERSON_FIELDS}, f"did {person!r} leave the company?")
+        receipts.append(r3.seq)
         count = facts.add(r3, "/total_count", f"People named {person} who previously worked at the company")
         refs[f"{key}:past_count"] = count.id if count else None
-        if r3.data.get("profiles"):
-            return choose(r3, 0, "not a current employee; found among former employees", [summary(p) for p in r3.data["profiles"]], "past")
-        ledger.append("decision", {"question": f"Which person is {person!r}?", "status": "NOT_FOUND", "chosen": None,
-                                   "rationale": "no current or former employee matches", "candidates": cands2,
-                                   "evidence_receipts": [r.seq, r2.seq, r3.seq]})
-        trace.warn(f"person {person!r}: no current or former employee matches")
+        former = r3.data.get("profiles") or []
+        cands2 += [summary(p, "past") for p in former]
+        if role_re:
+            past_role = [i for i, p in enumerate(former) if has_role(p, "past")]
+            if past_role:
+                return choose(r3, past_role[0], "held the claimed role at the company in the past; no longer there", cands2, "past")
+            if full_name and len(profiles) == 1:
+                return choose(r, 0, "unique full-name match at the company, but in a different role", cands2)
+            return not_found(f"nobody named {person!r} holds or held the {role} role at the company "
+                             f"({len(profiles)} current and {len(former)} former namesakes checked)", cands2, receipts)
+        if former and (full_name or len(former) == 1):
+            return choose(r3, 0, "not a current employee; found among former employees", cands2, "past")
+        return not_found("no unique current or former employee matches this name", cands2, receipts)
     except ToolError as exc:
         trace.bad(f"person search for {person!r} failed: {exc}")
         for suffix in ("current_profile", "past_profile", "current_count", "past_count"):

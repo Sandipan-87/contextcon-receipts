@@ -1,0 +1,4 @@
+TEST FIXTURE written by the team. Fictional company that should not exist in any dataset.
+
+Hello, I'm Priya Venkataraman, CEO of Zentrilux Quorvane Labs. We were founded in 2025 and are a team of 12 people.
+We raised a $3M seed round led by Sequoia.

@@ -1,0 +1,4 @@
+TEST FIXTURE written by the team. Claims are believed true; used to show how the agent treats unstable source data.
+
+I'm Eric Glyman, CEO of Ramp. We are a fintech founded in 2019 and today we have about 3,700 employees.
+We are hiring heavily in engineering.

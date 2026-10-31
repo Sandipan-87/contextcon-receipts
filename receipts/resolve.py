@@ -88,8 +88,15 @@ def resolve_company(client: CrustdataClient, ledger: Ledger, mention: str | None
     if not candidates:
         return _decide(ledger, mention, "NOT_FOUND", None, [], "identify returned no candidates", receipts)
 
+    # Only a candidate whose name actually matches (same significant tokens), or that a founder
+    # currently works at, may be chosen. Fuzzy near-names are listed, never picked.
+    eligible = [c for c in candidates if _same_name(c["name"], mention) or any("founder" in r for r in c["reasons"])]
+    if not eligible:
+        return _decide(ledger, mention, "NOT_FOUND", None, candidates,
+                       f"no company named {mention!r} found; closest names are only partial matches", receipts)
+    candidates = eligible + [c for c in candidates if c not in eligible]
     top = candidates[0]
-    second = candidates[1]["score"] if len(candidates) > 1 else -1
+    second = eligible[1]["score"] if len(eligible) > 1 else -1
     if top["score"] - second >= MARGIN:
         return _decide(ledger, mention, "RESOLVED", top["_info"], candidates,
                        f"top candidate leads by {top['score'] - second:.2f} (margin {MARGIN}): " + "; ".join(top["reasons"]),
@@ -133,6 +140,9 @@ def _score(info: dict, confidence: float, mention: str, sector: str | None, foun
     if _norm(info.get("name")) == _norm(mention):
         score += 0.5
         reasons.append("exact name match")
+    elif _same_name(info.get("name"), mention):
+        score += 0.3
+        reasons.append("same name ignoring suffixes")
     if sector:
         industries = " ".join(info.get("industries") or []).lower() + " " + (info.get("description") or "").lower()
         if any(word in industries for word in SECTOR_INDUSTRIES.get(sector, [sector])):
@@ -170,6 +180,12 @@ def _decide(ledger, mention, status, info, candidates, rationale, receipts) -> R
     return Resolution(status=status, company_id=info.get("crustdata_company_id") if info else None,
                       name=info.get("name") if info else None, domain=info.get("primary_domain") if info else None,
                       candidates=public, rationale=rationale, decision_seq=entry["seq"])
+
+
+def _same_name(a: str | None, b: str | None) -> bool:
+    ta = {t for t in _norm(a).split() if t not in STOPWORDS}
+    tb = {t for t in _norm(b).split() if t not in STOPWORDS}
+    return bool(ta) and ta == tb
 
 
 def _matches(data) -> list:

@@ -117,6 +117,8 @@ def extract_rules(pitch: str) -> dict:
     out = {"company_name": None, "domain": None, "sector": None, "founders": [], "claims": []}
 
     m = re.search(rf"\b(?:{_ROLES})\s+(?:and\s+\w+\s+)?(?:of|at)\s+({_ORG})", text)
+    m = m or re.search(rf"\b(?:[Ww]e are|[Ww]e're|[Tt]his is|[Ww]elcome to)\s+({_ORG})\s*,\s*(?:a|an|the)\b", text) \
+        or re.search(rf"(?:^|[.!?]\s+)({_ORG})\s+is\s+(?:a|an)\s+[a-z]", text)
     if m:
         out["company_name"] = re.sub(r"\s+(?:We|Our|and)$", "", m.group(1)).strip(" .,")
     m = re.search(r"\b((?:[a-z0-9\-]+\.)+(?:com|io|ai|co|in|app|dev|xyz|org|net))\b", text)

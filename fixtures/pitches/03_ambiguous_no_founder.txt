@@ -1,0 +1,3 @@
+TEST FIXTURE written by the team. Deliberately gives only a common company name and no founder or website.
+
+We are Mercury, a payments company. We are a team of 120 people and we are growing fast.

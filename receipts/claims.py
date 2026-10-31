@@ -121,14 +121,17 @@ def _person_role(p, x, r):
         name = past.get("basic_profile", {}).get("name")
         ends = [j.get("end_date", "")[:10] for j in employment(past, "past") if j.get("crustdata_company_id") == x.get("company_id")]
         return CONTRADICTED, f"{name} is no longer at the company; their role there ended {', '.join(e for e in ends if e) or 'on an unrecorded date'} {cite(r, 'past_profile')}."
-    return UNSUPPORTED, f"No current or former employee named {person} found at the company {cite(r, 'current_count')} {cite(r, 'past_count')}."
+    role_txt = f" holding the {role} role" if role else ""
+    return UNSUPPORTED, f"No current or former employee named {person}{role_txt} found at the company {cite(r, 'current_count')} {cite(r, 'past_count')}."
 
 
 def _prior_employer(p, x, r):
     person, company = p["person"], p["company"]
     profile = x.get("current_profile") or x.get("past_profile")
     if not profile:
-        return UNVERIFIABLE, f"{person} was not found at the company, so their history cannot be checked {cite(r, 'current_count')}."
+        role_txt = f" as {p['role']}" if p.get("role") else ""
+        return UNVERIFIABLE, (f"No current or former employee named {person}{role_txt} was found at the company, "
+                              f"so their history cannot be checked {cite(r, 'current_count')} {cite(r, 'past_count')}.")
     name = profile.get("basic_profile", {}).get("name")
     ref = "current_profile" if x.get("current_profile") else "past_profile"
     history = employment(profile, "past") + [j for j in employment(profile, "current") if j.get("crustdata_company_id") != x.get("company_id")]
@@ -143,6 +146,10 @@ def _prior_employer(p, x, r):
     job = hits[0]
     years = tenure_years(job.get("start_date"), job.get("end_date"))
     span = f"{(job.get('start_date') or '?')[:7]} to {(job.get('end_date') or 'present')[:7]}"
+    if ref == "past_profile":
+        ended = [j.get("end_date", "")[:7] for j in employment(profile, "past") if j.get("crustdata_company_id") == x.get("company_id")]
+        return PARTIAL, (f"{name} did work at {job.get('name')} as {job.get('title')} ({span}), but is no longer at the company "
+                         f"(left {', '.join(e for e in ended if e) or 'on an unrecorded date'}) {cite(r, ref)}.")
     if p.get("years") and years is not None and abs(years - p["years"]) > 1:
         return PARTIAL, f"{name} worked at {job.get('name')} as {job.get('title')} ({span}, {years} years), not {fmt_num(p['years'])} years {cite(r, ref)}."
     return VERIFIED, f"{name} worked at {job.get('name')} as {job.get('title')} ({span}) {cite(r, ref)}."
