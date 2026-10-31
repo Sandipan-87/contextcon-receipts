@@ -4,6 +4,31 @@
 
 Built for ContextCon IIT Bombay (Crustdata × Y Combinator). Themes: Investing, and Infrastructure for agents (cryptographic execution trails, rule-checkers).
 
+## High-level architecture
+
+![Receipts high-level architecture (hand-drawn)](docs/architecture-hand-drawn.png)
+
+```mermaid
+flowchart TB
+    R["Rulebook (STRATEGY.md)<br/>thesis · ± margins · guardrails · actions"]
+    U["User (analyst)<br/>thesis / pitch / 1 company / picks"]
+    A["Agent<br/>1 Understand · 2 Identify · 3 Investigate<br/>4 Judge · 5 Decide · 6 Act"]
+    C["Crustdata API<br/>company · people · jobs"]
+    L["Signed ledger (receipts)"]
+    B["Deal board + Outbox"]
+    V["Verify (no LLM) + Crustdata witness"]
+    R -- "bounds every step" --> A
+    U -- "request" --> A
+    A <--> C
+    A --> L
+    A --> B
+    L --> V
+    C -- "usage log" --> V
+    V -- "results + proof" --> U
+```
+
+**Request → Identify → Investigate (Crustdata) → Judge (code) → Decide (rulebook) → Act → Seal → Verify.** Your picks feed a learning loop that teaches the agent your taste. More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## The manual work it replaces
 An analyst at a fund spends 1–2 hours per company:
 1. Find companies that fit the thesis, or read an inbound pitch.
