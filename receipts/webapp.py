@@ -28,6 +28,29 @@ from .strategy import STRATEGY_PATH, load_strategy
 WEB = Path(__file__).parent / "web"
 app = FastAPI(title="Receipts")
 app.mount("/static", StaticFiles(directory=WEB), name="static")
+
+
+@app.middleware("http")
+async def basic_auth(request, call_next):
+    """When RECEIPTS_PASSWORD is set (e.g. on a server), require HTTP basic auth (any username)."""
+    import base64
+    import hmac
+    import os
+
+    from fastapi.responses import Response
+    password = os.environ.get("RECEIPTS_PASSWORD")
+    if password:
+        header = request.headers.get("authorization", "")
+        ok = False
+        if header.startswith("Basic "):
+            try:
+                _, _, given = base64.b64decode(header[6:]).decode("utf-8").partition(":")
+                ok = hmac.compare_digest(given, password)
+            except Exception:
+                ok = False
+        if not ok:
+            return Response("Authentication required", status_code=401, headers={"WWW-Authenticate": 'Basic realm="Receipts"'})
+    return await call_next(request)
 JOBS: dict[str, dict] = {}
 LOCK = threading.Lock()
 
@@ -296,9 +319,14 @@ def _run_dir(run_id: str) -> Path:
 
 
 def main():
+    import os
+
     import uvicorn
-    print("Receipts UI → http://127.0.0.1:8000")
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
+    host, port = os.environ.get("RECEIPTS_HOST", "127.0.0.1"), int(os.environ.get("RECEIPTS_PORT", "8000"))
+    if host not in ("127.0.0.1", "localhost") and not os.environ.get("RECEIPTS_PASSWORD")             and os.environ.get("RECEIPTS_PUBLIC_NO_AUTH") != "1":
+        raise SystemExit("Refusing to listen publicly without RECEIPTS_PASSWORD (set RECEIPTS_PUBLIC_NO_AUTH=1 to allow an open demo).")
+    print(f"Receipts UI → http://{host}:{port}")
+    uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,8 @@
 
 Built for ContextCon IIT Bombay (Crustdata × Y Combinator). Themes: Investing, and Infrastructure for agents (cryptographic execution trails, rule-checkers).
 
+**Live demo:** http://16.4.37.189:8000 (deployed on AWS EC2, ap-south-1)
+
 ## High-level architecture
 
 ![Receipts high-level architecture (hand-drawn)](docs/architecture-hand-drawn.png)
