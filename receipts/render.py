@@ -38,6 +38,11 @@ def render_report(meta: dict, claims: list[dict], facts: dict[str, dict]) -> str
     else:
         lines.append(f"**No contradictions found; some claims need documents.** {summary}.")
     lines.append("")
+    if meta.get("decision"):
+        d = meta["decision"]
+        lines.append(f"**Agent decision: {d['decision']}** (rule from strategy/STRATEGY.md: {d['rule']}). "
+                     "The resulting deal-board update and drafted email are recorded as `action` entries in the ledger.")
+        lines.append("")
 
     if res["status"] != "RESOLVED" and res.get("candidates"):
         lines.append("## Candidate companies (not guessed)")
@@ -117,3 +122,96 @@ def short_value(value) -> str:
         return f"profile of {name}" if name else f"object with {len(value)} fields"
     text = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
     return text if len(text) <= 80 else text[:77] + "..."
+
+
+# ---------------------------------------------------------------- scouting rounds and decisions
+
+REC_ICONS = {"ADVANCE": "🟢", "PASS": "🔴", "NEEDS_HUMAN": "🟡"}
+
+
+def render_round(meta: dict, candidates: list[dict], facts: dict[str, dict]) -> str:
+    model = meta["model"]
+    lines = [f"# Scouting round {meta['round_no']}", ""]
+    lines.append(f"**Run:** `{meta['run_id']}` · as of {meta['as_of']} · model trained on {model['n_decisions']} of your decisions"
+                 f" ({model['n_picks']} picks)  ")
+    lines.append(f"**Predictions sealed** in ledger entry #{meta['predictions_seq']} before any human decision, so the agreement score "
+                 "computed after you decide cannot be edited.  ")
+    lines.append("")
+    lines.append("| # | Company | Team | Growth YoY | Last round | Open roles (eng) | p(you pick) | Agent | Why |")
+    lines.append("|---|---|---|---|---|---|---|---|---|")
+    for c in candidates:
+        raw, refs = c["raw"], c["refs"]
+        growth = "excluded (unstable data)" if raw.get("growth_excluded") else (
+            f"{raw['growth_yoy']:+.0f}% {fref(refs, 'growth_yoy')}" if raw.get("growth_yoy") is not None else "n/a")
+        team = f"{raw['headcount']:,} {fref(refs, 'headcount_total')}" if raw.get("headcount") is not None else "n/a"
+        rnd = (f"{(raw.get('last_round_type') or 'n/a').replace('_', ' ')} {raw.get('last_fundraise_date') or ''} "
+               f"{fref(refs, 'last_round_type')}").strip()
+        roles = f"{raw.get('open_roles', 0)} ({raw.get('eng_roles', 0)}) {fref(refs, 'job_buckets')}"
+        agent = f"{REC_ICONS[c['recommendation']]} {c['recommendation']}" + (" · auto" if c["auto_act"] else " · queued")
+        lines.append(f"| {c['n']} | **{escape(c['name'])}** ({escape(c['domain'] or 'no domain')}) | {team} | {growth} | {escape(rnd)} | "
+                     f"{roles} | {c['probability']:.2f} | {agent} | {escape(', '.join(c['why']) or '—')} |")
+    lines.append("")
+    lines.append("## Why each recommendation (rule in force)")
+    lines.append("")
+    for c in candidates:
+        lines.append(f"- **{c['n']}. {escape(c['name'])}**: {escape(c['rule'])}"
+                     + (f"; missing: {', '.join(c['missing'])}" if c["missing"] else ""))
+    lines.append("")
+    _evidence_table(lines, facts, sorted({fid for c in candidates for fid in c["refs"].values() if fid}, key=lambda f: int(f[1:])))
+    lines.append("## Your move")
+    lines.append("")
+    lines.append(f"Pick the companies you would take forward: `python -m receipts decide --round {meta['round_no']} --pick 2,5,7`. "
+                 "Everything not picked is recorded as a reject. The agent then scores its sealed predictions against your picks "
+                 "and re-fits its model of your preferences.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_decision(meta: dict, decisions: list[dict], agreement: dict, learned: list[str]) -> str:
+    lines = [f"# Decisions for scouting round {meta['round_no']}", ""]
+    lines.append(f"**Run:** `{meta['run_id']}` · decided by a human · predictions taken from sealed run `{meta['scout_run_id']}` "
+                 f"(head `{meta['scout_head_hash'][:23]}…`, signature checked before use)  ")
+    lines.append("")
+    lines.append("## Agent vs you")
+    lines.append("")
+    lines.append(f"- Agent's sealed pick/reject predictions matched **{agreement['decisions_matched']} of {agreement['total']}** of your decisions.")
+    lines.append(f"- Of the agent's top {agreement['top_k']} ranked companies, you picked **{agreement['top_k_overlap']}**.")
+    lines.append("")
+    lines.append("| # | Company | Agent predicted | You decided | Agent p(pick) |")
+    lines.append("|---|---|---|---|---|")
+    for d in decisions:
+        mark = "✅" if d["predicted_pick"] == d["picked"] else "✗"
+        lines.append(f"| {d['n']} | {escape(d['name'])} | {'pick' if d['predicted_pick'] else 'reject'} | "
+                     f"{'**pick**' if d['picked'] else 'reject'} {mark} | {d['probability']:.2f} |")
+    lines.append("")
+    lines.append("## What the agent learned about your preferences")
+    lines.append("")
+    for line in learned:
+        lines.append(f"- {line}")
+    lines.append("")
+    w = meta["model_after"]["weights"]
+    lines.append("| Preference | Stated thesis | Learned now |")
+    lines.append("|---|---|---|")
+    for f, before in meta["prior_weights"].items():
+        lines.append(f"| {f.replace('_', ' ')} | {before:+.2f} | {w[f]:+.2f} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def fref(refs: dict, name: str) -> str:
+    fid = refs.get(name)
+    return f"[{fid}](#{fid.lower()})" if fid else ""
+
+
+def _evidence_table(lines: list, facts: dict, fids: list[str]) -> None:
+    if not fids:
+        return
+    lines.append("## Evidence (every cited fact, with its receipt)")
+    lines.append("")
+    lines.append("| Fact | What | Value | Receipt | JSON pointer |")
+    lines.append("|---|---|---|---|---|")
+    for fid in fids:
+        f = facts[fid]
+        lines.append(f"| <a id=\"{fid.lower()}\"></a>{fid} | {escape(f['label'])} | {escape(short_value(f['value']))} | "
+                     f"#{f['receipt_seq']} | `{f['pointer']}` |")
+    lines.append("")

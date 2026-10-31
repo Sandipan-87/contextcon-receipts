@@ -3,3 +3,6 @@ pynacl>=1.5
 jsonpointer>=3.0
 rich>=13
 anthropic>=0.70
+pyyaml>=6
+numpy>=1.26
+pytest>=8

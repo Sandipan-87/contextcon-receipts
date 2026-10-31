@@ -24,15 +24,26 @@ ROLE_PATTERNS = {
 }
 
 
-def evaluate(claim_type: str, params: dict, inputs: dict, refs: dict) -> tuple[str, str]:
-    """inputs: name -> fact value (or None); refs: name -> fact id (or None) for citations."""
+DEFAULT_TOLERANCES = {
+    "headcount": {"verified": 15, "partial": 40},
+    "total_funding": {"verified": 10, "partial": 30},
+    "round_amount": 5,
+    "open_roles": {"verified": 25, "partial": 50},
+    "unstable_series_swing": 40,
+    "total_vs_series": 15,
+}
+
+
+def evaluate(claim_type: str, params: dict, inputs: dict, refs: dict, tol: dict | None = None) -> tuple[str, str]:
+    """inputs: name -> fact value (or None); refs: name -> fact id (or None) for citations;
+    tol: the ± margins from strategy/STRATEGY.md (recorded with each claim so verify reproduces them)."""
     fn = COMPARATORS.get(claim_type, _other)
-    return fn(params, inputs, refs)
+    return fn(params, inputs, refs, {**DEFAULT_TOLERANCES, **(tol or {})})
 
 
 # ---------------------------------------------------------------- comparators
 
-def _founded_year(p, x, r):
+def _founded_year(p, x, r, t):
     actual = x.get("year_founded")
     if actual is None:
         return UNVERIFIABLE, "Crustdata has no founding year for this company."
@@ -44,36 +55,36 @@ def _founded_year(p, x, r):
     return CONTRADICTED, f"Recorded founding year is {actual} {cite(r, 'year_founded')}, not {claimed}."
 
 
-def _headcount(p, x, r):
+def _headcount(p, x, r, t):
     total = x.get("headcount_total")
     if total is None:
         return UNVERIFIABLE, "Crustdata has no headcount for this company."
     claimed = p["value"]
-    stable, why = headcount_stability(total, x.get("timeseries"))
+    stable, why = headcount_stability(total, x.get("timeseries"), t["unstable_series_swing"], t["total_vs_series"])
     if not stable:
         return UNVERIFIABLE, (f"Crustdata headcount data is unstable, so the claim cannot be judged: {why} "
                               f"{cite(r, 'headcount_total')} {cite(r, 'timeseries')}.")
     diff = pct(claimed, total)
-    if abs(diff) <= 15:
-        return VERIFIED, f"Recorded headcount is {fmt_int(total)} {cite(r, 'headcount_total')}, within 15% of the claim."
-    if abs(diff) <= 40:
+    if abs(diff) <= t["headcount"]["verified"]:
+        return VERIFIED, f"Recorded headcount is {fmt_int(total)} {cite(r, 'headcount_total')}, within {t['headcount']['verified']}% of the claim."
+    if abs(diff) <= t["headcount"]["partial"]:
         return PARTIAL, f"Recorded headcount is {fmt_int(total)} {cite(r, 'headcount_total')}; the claim is {fmt_pct(diff)} off."
     return CONTRADICTED, f"Recorded headcount is {fmt_int(total)} {cite(r, 'headcount_total')}; the claim of {fmt_int(claimed)} is {fmt_pct(diff)} off."
 
 
-def _total_funding(p, x, r):
+def _total_funding(p, x, r, t):
     total = x.get("total_investment_usd")
     if not total:
         return UNVERIFIABLE, "Crustdata has no total funding figure for this company."
     diff = pct(p["amount_usd"], total)
-    if abs(diff) <= 10:
+    if abs(diff) <= t["total_funding"]["verified"]:
         return VERIFIED, f"Total funding recorded is {fmt_usd(total)} {cite(r, 'total_investment_usd')}."
-    if abs(diff) <= 30:
+    if abs(diff) <= t["total_funding"]["partial"]:
         return PARTIAL, f"Total funding recorded is {fmt_usd(total)} {cite(r, 'total_investment_usd')}; the claim is {fmt_pct(diff)} off."
     return CONTRADICTED, f"Total funding recorded is {fmt_usd(total)} {cite(r, 'total_investment_usd')}; the claim is {fmt_pct(diff)} off."
 
 
-def _round(p, x, r):
+def _round(p, x, r, t):
     milestones = x.get("milestones") or []
     if not milestones:
         return UNVERIFIABLE, "Crustdata has no funding-round history for this company."
@@ -82,14 +93,14 @@ def _round(p, x, r):
     if rtype:
         match = next((m for m in milestones if (m.get("round_type") or "").lower() == rtype), None)
     if match is None and amount:
-        match = next((m for m in milestones if m.get("amount_usd") and abs(pct(amount, m["amount_usd"])) <= 5), None)
+        match = next((m for m in milestones if m.get("amount_usd") and abs(pct(amount, m["amount_usd"])) <= t["round_amount"]), None)
     if match is None:
         recorded = ", ".join(f"{label_round(m.get('round_type'))} {m.get('date') or '?'}" for m in milestones[:4])
         return CONTRADICTED, f"No {label_round(rtype) if rtype else 'matching'} round in the recorded funding history ({recorded}) {cite(r, 'milestones')}."
 
     desc = f"{label_round(match.get('round_type'))} on {match.get('date')}"
     problems = []
-    if amount and match.get("amount_usd") and abs(pct(amount, match["amount_usd"])) > 5:
+    if amount and match.get("amount_usd") and abs(pct(amount, match["amount_usd"])) > t["round_amount"]:
         problems.append(f"recorded amount is {fmt_usd(match['amount_usd'])}, not {fmt_usd(amount)}")
     lead_note = ""
     if lead:
@@ -107,7 +118,7 @@ def _round(p, x, r):
     return VERIFIED, f"{desc}{amount_txt}{lead_txt} {cite(r, 'milestones')}."
 
 
-def _person_role(p, x, r):
+def _person_role(p, x, r, t):
     person, role = p["person"], (p.get("role") or "").upper()
     current, past = x.get("current_profile"), x.get("past_profile")
     if current:
@@ -125,7 +136,7 @@ def _person_role(p, x, r):
     return UNSUPPORTED, f"No current or former employee named {person}{role_txt} found at the company {cite(r, 'current_count')} {cite(r, 'past_count')}."
 
 
-def _prior_employer(p, x, r):
+def _prior_employer(p, x, r, t):
     person, company = p["person"], p["company"]
     profile = x.get("current_profile") or x.get("past_profile")
     if not profile:
@@ -155,15 +166,15 @@ def _prior_employer(p, x, r):
     return VERIFIED, f"{name} worked at {job.get('name')} as {job.get('title')} ({span}) {cite(r, ref)}."
 
 
-def _hiring(p, x, r):
+def _hiring(p, x, r, t):
     total = x.get("job_count")
     if total is None:
         return UNVERIFIABLE, "Crustdata job search returned no count."
     if p.get("open_roles"):
         diff = pct(p["open_roles"], total)
-        if abs(diff) <= 25:
+        if abs(diff) <= t["open_roles"]["verified"]:
             return VERIFIED, f"{fmt_int(total)} open roles are listed {cite(r, 'job_count')}."
-        status = PARTIAL if abs(diff) <= 50 else CONTRADICTED
+        status = PARTIAL if abs(diff) <= t["open_roles"]["partial"] else CONTRADICTED
         return status, f"{fmt_int(total)} open roles are listed {cite(r, 'job_count')}; the claim is {fmt_pct(diff)} off."
     category = (p.get("category") or "").lower()
     buckets = x.get("category_buckets") or []
@@ -176,7 +187,7 @@ def _hiring(p, x, r):
     return CONTRADICTED, f"No open {category} roles among {fmt_int(total)} listings {cite(r, 'job_count')}."
 
 
-def _revenue(p, x, r):
+def _revenue(p, x, r, t):
     low, high = x.get("revenue_lower"), x.get("revenue_upper")
     if low is None and high is None:
         return UNVERIFIABLE, "Crustdata has no revenue data for this company; ask for financials."
@@ -189,7 +200,7 @@ def _revenue(p, x, r):
     return UNSUPPORTED, f"Outside Crustdata's modeled revenue estimate of {rng} {refs}; estimates are modeled, so ask for financials."
 
 
-def _other(p, x, r):
+def _other(p, x, r, t):
     return UNVERIFIABLE, "This kind of claim cannot be checked against Crustdata's company and people data."
 
 
@@ -202,7 +213,7 @@ COMPARATORS = {
 
 # ---------------------------------------------------------------- helpers (pure)
 
-def headcount_stability(total, timeseries) -> tuple[bool, str]:
+def headcount_stability(total, timeseries, swing_pct: float = 40, total_vs_series_pct: float = 15) -> tuple[bool, str]:
     points = [pt for pt in (timeseries or []) if pt.get("employee_count")]
     if len(points) < 2:
         return True, ""
@@ -212,13 +223,13 @@ def headcount_stability(total, timeseries) -> tuple[bool, str]:
     swings = []
     for a, b in zip(recent, recent[1:]):
         change = pct(b["employee_count"], a["employee_count"])
-        if abs(change) > 40:
+        if abs(change) > swing_pct:
             swings.append(f"{fmt_int(a['employee_count'])} on {a['date'][:10]} to {fmt_int(b['employee_count'])} on {b['date'][:10]}")
     latest = points[-1]["employee_count"]
     reasons = []
     if swings:
-        reasons.append(f"week-on-week swings over 40% ({'; '.join(swings[:3])})")
-    if total and abs(pct(total, latest)) > 15:
+        reasons.append(f"week-on-week swings over {fmt_num(swing_pct)}% ({'; '.join(swings[:3])})")
+    if total and abs(pct(total, latest)) > total_vs_series_pct:
         reasons.append(f"reported total {fmt_int(total)} disagrees with the latest series point {fmt_int(latest)} ({points[-1]['date'][:10]})")
     return (not reasons), "; ".join(reasons) + ("." if reasons else "")
 

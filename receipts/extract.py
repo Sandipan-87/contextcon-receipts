@@ -57,7 +57,8 @@ SYSTEM_PROMPT = """You extract factual, checkable claims from a startup founder'
 Return only what the text states; never infer or add facts. Use these claim types:
 - founded_year: params.year
 - headcount: params.value (number of employees)
-- total_funding: params.amount_usd (total raised to date)
+- total_funding: params.amount_usd, ONLY when the text states the cumulative total raised to date
+  (e.g. "raised $40M in total"). A single round's amount is a round claim, never total_funding.
 - round: params.round_type (e.g. "series_d", "seed"), params.amount_usd, params.lead_investor
 - person_role: params.person (name as written), params.role (e.g. "CTO")
 - prior_employer: params.person, params.role, params.company, params.years (tenure if stated)
@@ -71,7 +72,15 @@ founders lists the full names of founders/executives that appear in the text. Ea
 
 
 def extract(pitch: str) -> tuple[dict, str]:
-    """Returns (extraction, extractor_name)."""
+    """Returns (extraction, extractor_name). Ollama (minimax-m3 first) -> Anthropic -> rules."""
+    from . import llm
+
+    if llm.available():
+        try:
+            data, model = llm.chat_json(SYSTEM_PROMPT, f"<pitch>\n{pitch}\n</pitch>", EXTRACTION_SCHEMA)
+            return _number_claims(_clean_llm(data)), f"llm:ollama/{model}"
+        except Exception as exc:  # any LLM problem falls back
+            trace.warn(f"Ollama extraction failed ({exc.__class__.__name__}: {str(exc)[:120]}); falling back")
     if anthropic_api_key():
         try:
             return _number_claims(_extract_llm(pitch)), f"llm:{anthropic_model()}"
@@ -96,11 +105,48 @@ def _extract_llm(pitch: str) -> dict:
     if response.stop_reason == "refusal":
         raise RuntimeError("model refused the extraction request")
     text = next(b.text for b in response.content if b.type == "text")
-    data = json.loads(text)
-    for claim in data.get("claims", []):
-        if claim["type"] == "round" and claim["params"].get("round_type"):
-            claim["params"]["round_type"] = normalize_round(claim["params"]["round_type"])
-    return data
+    return _clean_llm(json.loads(text))
+
+
+def _clean_llm(data: dict) -> dict:
+    """Validate and normalise LLM output against the schema; drop anything malformed."""
+    out = {"company_name": data.get("company_name") or None, "domain": data.get("domain") or None,
+           "sector": (data.get("sector") or None), "founders": [f for f in data.get("founders") or [] if isinstance(f, str)],
+           "claims": []}
+    for claim in data.get("claims") or []:
+        if not isinstance(claim, dict) or claim.get("type") not in CLAIM_TYPES or not claim.get("text"):
+            continue
+        params = {k: None for k in PARAMS_SCHEMA["properties"]}
+        params.update({k: v for k, v in (claim.get("params") or {}).items() if k in params})
+        for key in ("year", "value", "amount_usd", "years", "open_roles"):
+            if isinstance(params[key], str):
+                try:
+                    params[key] = float(re.sub(r"[^\d.]", "", params[key]))
+                except ValueError:
+                    params[key] = None
+        if claim["type"] == "round" and params.get("round_type"):
+            params["round_type"] = normalize_round(params["round_type"])
+        required = {"founded_year": "year", "headcount": "value", "total_funding": "amount_usd", "revenue": "amount_usd",
+                    "person_role": "person", "prior_employer": "company"}
+        if claim["type"] in required and params.get(required[claim["type"]]) in (None, ""):
+            continue
+        out["claims"].append({"type": claim["type"], "text": claim["text"], "params": params})
+    return _drop_round_amounts_misread_as_totals(out)
+
+
+def _drop_round_amounts_misread_as_totals(out: dict) -> dict:
+    """Guard: a total_funding claim whose amount equals a round amount from the same sentence, with no
+    cumulative wording, is a misread round; drop it rather than accuse the founder of a wrong total."""
+    rounds = {(c["text"], c["params"].get("amount_usd")) for c in out["claims"] if c["type"] == "round"}
+    keep = []
+    for c in out["claims"]:
+        if (c["type"] == "total_funding" and (c["text"], c["params"].get("amount_usd")) in rounds
+                and not re.search(r"(total|to date|in all|overall|cumulative|so far)", c["text"], re.I)):
+            trace.warn(f"dropped a total-funding claim that is really the round amount: {c['text']!r}")
+            continue
+        keep.append(c)
+    out["claims"] = keep
+    return out
 
 
 # ---------------------------------------------------------------- rule-based fallback

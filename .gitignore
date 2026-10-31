@@ -23,3 +23,7 @@ Thumbs.db
 
 # local API response cache
 .cache/
+
+# runtime state (local to this machine)
+data/
+outbox/

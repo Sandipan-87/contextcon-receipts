@@ -18,7 +18,7 @@ def _utf8_console():
 
 def _run_dir(arg: str) -> Path:
     if arg == "last":
-        runs = sorted(RUNS_DIR.glob("run_*"))
+        runs = sorted((d for d in RUNS_DIR.iterdir() if (d / "head.sig").exists()), key=lambda d: (d / "head.sig").stat().st_mtime)
         if not runs:
             sys.exit("no runs yet")
         return runs[-1]
@@ -46,16 +46,57 @@ def main(argv=None):
     p_tam.add_argument("run", help="run directory, run id, or 'last'")
     p_tam.add_argument("--receipt", type=int, help="receipt (ledger seq) to alter; default: first company enrich")
 
+    p_sc = sub.add_parser("scout", help="scout new companies matching strategy/STRATEGY.md and seal predictions")
+    p_sc.add_argument("--n", type=int, default=10, help="companies per round (default 10)")
+    p_sc.add_argument("--round", type=int, help="round number (default: next)")
+
+    p_de = sub.add_parser("decide", help="record your picks for a scouting round; the agent scores itself and learns")
+    p_de.add_argument("--round", type=int, required=True)
+    p_de.add_argument("--pick", required=True, help="comma-separated table numbers or names, e.g. 2,5,7")
+
+    sub.add_parser("board", help="show the deal board")
+    sub.add_parser("learned", help="show what the agent has learned about your preferences")
+
     args = parser.parse_args(argv)
     if args.cmd == "run":
         from .agent import run
         pitch = args.pitch.read_text(encoding="utf-8") if args.pitch else args.text
         run(pitch, domain=args.domain, use_cache=not args.no_cache)
+    elif args.cmd == "scout":
+        from .scout import scout
+        from .strategy import load_strategy
+        strategy, text = load_strategy()
+        scout(strategy, text, n=args.n, round_no=args.round)
+    elif args.cmd == "decide":
+        from .decide import decide
+        from .strategy import load_strategy
+        strategy, text = load_strategy()
+        decide(strategy, text, args.round, args.pick)
+    elif args.cmd == "board":
+        _board()
+    elif args.cmd == "learned":
+        from .decide import LEARNED_PATH
+        print(LEARNED_PATH.read_text(encoding="utf-8") if LEARNED_PATH.exists() else "No decisions recorded yet.")
     elif args.cmd == "verify":
         from .verify import verify_run
         sys.exit(0 if verify_run(_run_dir(args.run), witness=args.witness) else 1)
     elif args.cmd == "tamper":
         _tamper(_run_dir(args.run), args.receipt)
+
+
+def _board():
+    from rich.table import Table
+
+    from .board import all_deals, connect
+    from .trace import console
+    table = Table(title="Deal board")
+    for col in ("Round", "Company", "Stage", "Agent", "p(pick)", "You", "Source"):
+        table.add_column(col)
+    for d in all_deals(connect()):
+        table.add_row(str(d["round_no"] or "-"), f"{d['name']} ({d['domain'] or '-'})", d["stage"] or "-",
+                      d["agent_recommendation"] or "-", f"{d['agent_probability']:.2f}" if d["agent_probability"] is not None else "-",
+                      d["human_decision"] or "-", d["source"] or "-")
+    console.print(table)
 
 
 def _tamper(run_dir: Path, seq: int | None):

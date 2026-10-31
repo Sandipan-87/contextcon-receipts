@@ -16,6 +16,8 @@ from .ledger import Ledger, sha256_hex
 from .proxy import CrustdataClient, ToolError
 from .render import ICONS, render_report
 from .resolve import resolve_company
+from .pitch_policy import act_on_pitch, pitch_decision
+from .strategy import load_strategy
 
 ENRICH_FIELDS = [
     "basic_info.name", "basic_info.primary_domain", "basic_info.year_founded",
@@ -45,6 +47,10 @@ def run(pitch: str, domain: str | None = None, use_cache: bool = True) -> Path:
     run_dir.mkdir(parents=True, exist_ok=True)
     ledger = Ledger(run_dir, run_id, previous_head=_latest_head(run_dir))
     trace.console.rule(f"[bold]Receipts · {run_id}")
+    strategy, strategy_text = load_strategy()
+    tol = strategy.get("tolerances", {})
+    ledger.append("strategy", {"path": "strategy/STRATEGY.md", "text": strategy_text,
+                               "text_hash": sha256_hex(strategy_text.encode("utf-8"))})
 
     ledger.append("input", {"pitch": pitch, "pitch_hash": sha256_hex(pitch.encode("utf-8")), "domain_hint": domain})
 
@@ -76,10 +82,17 @@ def run(pitch: str, domain: str | None = None, use_cache: bool = True) -> Path:
     trace.step("Checking each claim (deterministic comparators)")
     results = []
     for c in extraction["claims"]:
-        results.append(_check(c, resolution, facts, refs, unavailable, ledger))
+        results.append(_check(c, resolution, facts, refs, unavailable, ledger, tol))
+
+    decision = pitch_decision(results, resolution, strategy)
+    ledger.append("decision", {"question": "What should the fund do with this pitch?", **decision})
+    trace.step(f"Decision: {decision['decision']}")
+    trace.info(escape(decision["rule"]))
 
     meta = {
+        "kind": "pitch",
         "run_id": run_id,
+        "decision": decision,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "extractor": extractor,
         "company_mention": extraction.get("company_name"),
@@ -100,6 +113,7 @@ def run(pitch: str, domain: str | None = None, use_cache: bool = True) -> Path:
     report = render_report(meta, results, {fid: vars(f) for fid, f in facts.facts.items()})
     (run_dir / "report.md").write_text(report, encoding="utf-8")
     ledger.append("report", {"report_hash": sha256_hex(report.encode("utf-8"))})
+    act_on_pitch(ledger, strategy, run_id, decision, resolution, results)
     sealed = ledger.seal()
 
     trace.step("Sealed")
@@ -258,8 +272,8 @@ def _gather_person(client, facts, refs, unavailable, company_id, person, role):
             unavailable[f"{key}:{suffix}"] = exc.seq
 
 
-def _check(c, resolution, facts, refs, unavailable, ledger) -> dict:
-    record = {"claim_id": c["claim_id"], "type": c["type"], "text": c["text"], "params": c["params"], "inputs": {}}
+def _check(c, resolution, facts, refs, unavailable, ledger, tol) -> dict:
+    record = {"claim_id": c["claim_id"], "type": c["type"], "text": c["text"], "params": c["params"], "inputs": {}, "tol": tol}
     if resolution.status != "RESOLVED":
         record.update(status=UNVERIFIABLE, unavailable_seq=resolution.decision_seq,
                       explanation=f"The company could not be resolved ({resolution.status}), so nothing was checked.")
@@ -279,7 +293,7 @@ def _check(c, resolution, facts, refs, unavailable, ledger) -> dict:
         local_refs[name] = fid
         inputs[name] = facts.value(fid) if fid else None
 
-    status, explanation = evaluate(c["type"], c["params"], inputs, local_refs)
+    status, explanation = evaluate(c["type"], c["params"], inputs, local_refs, tol)
     record.update(status=status, explanation=explanation)
     if c["type"] == "headcount" and status == UNVERIFIABLE and "unstable" in explanation:
         ledger.append("anomaly", {"claim_id": c["claim_id"], "kind": "unstable_headcount_series",
@@ -294,7 +308,7 @@ def _log(record):
 
 
 def _latest_head(current_dir: Path) -> str | None:
-    heads = sorted(p for p in RUNS_DIR.glob("run_*/head.sig") if p.parent != current_dir)
+    heads = sorted((p for p in RUNS_DIR.glob("*/head.sig") if p.parent != current_dir), key=lambda p: p.stat().st_mtime)
     if not heads:
         return None
     return json.loads(heads[-1].read_text(encoding="utf-8")).get("head_hash")
@@ -302,3 +316,4 @@ def _latest_head(current_dir: Path) -> str | None:
 
 def _write_json(path: Path, obj) -> None:
     path.write_text(json.dumps(obj, indent=1, ensure_ascii=False), encoding="utf-8")
+

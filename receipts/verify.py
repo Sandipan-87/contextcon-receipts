@@ -1,12 +1,10 @@
 """Deterministic verifier: no LLM, no trust in the agent.
 
-1. chain     every entry_hash recomputes, prev_hash links are intact, seq has no gaps
-2. signature Ed25519 signature over the chain head is valid and matches the last entry
-3. blobs     every stored API response re-hashes to the response_hash in its ledger entry
-4. facts     every fact re-resolves (JSON Pointer) from its raw response to the same value
-5. claims    every comparison re-runs to the same status and explanation
-6. report    the memo re-renders byte-for-byte from claims + facts (no unbacked text or numbers)
-7. witness   (optional) every live call matches Crustdata's own usage log for its X-Request-ID
+Every run:  chain · signature · blobs · facts · actions (rule-permitted, drafted emails grounded)
+pitch run:  claims re-evaluated with the sealed tolerances · memo re-rendered byte-for-byte
+scout run:  features recomputed from facts · predictions recomputed from the sealed model · report re-rendered
+decide run: sealed predictions re-checked · agreement recomputed · model re-fitted from the training set
+--witness:  every live API call matches Crustdata's usage log for its X-Request-ID
 """
 
 import json
@@ -15,11 +13,14 @@ from pathlib import Path
 
 import httpx
 
+from . import learn
 from .claims import evaluate
-from .config import CRUSTDATA_API_VERSION, CRUSTDATA_BASE_URL, crustdata_api_key
+from .compose import grounded
+from .config import CRUSTDATA_API_VERSION, CRUSTDATA_BASE_URL, RUNS_DIR, crustdata_api_key
 from .facts import load_facts, resolve
+from .features import compute
 from .ledger import canonical_json, entry_hash, read_blob, read_ledger, sha256_hex, verify_signature
-from .render import render_report
+from .render import render_decision, render_report, render_round
 from .trace import bad, console, info, ok
 
 
@@ -32,8 +33,11 @@ def verify_run(run_dir: Path, witness: bool = False) -> bool:
         (ok if passed else bad)(f"{name}: {detail}")
 
     entries = read_ledger(run_dir)
+    by_seq = {e["seq"]: e for e in entries}
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    kind = meta.get("kind", "pitch")
 
-    # 1. chain
+    # chain
     broken = None
     prev = sha256_hex(entries[0]["run_id"].encode("utf-8")) if entries and entries[0].get("type") == "run_start" else None
     for i, e in enumerate(entries):
@@ -49,7 +53,7 @@ def verify_run(run_dir: Path, witness: bool = False) -> bool:
         prev = e["entry_hash"]
     check("chain", broken is None, broken or f"{len(entries)} entries, all links intact")
 
-    # 2. signature
+    # signature
     sealed = json.loads((run_dir / "head.sig").read_text(encoding="utf-8"))
     sig_ok = verify_signature(sealed)
     head_ok = bool(entries) and sealed["head_hash"] == entries[-1]["entry_hash"] and sealed["entry_count"] == len(entries)
@@ -57,7 +61,7 @@ def verify_run(run_dir: Path, witness: bool = False) -> bool:
           "Ed25519 signature valid over chain head" if sig_ok and head_ok else
           ("signature invalid" if not sig_ok else "signed head does not match the ledger (entries added or removed)"))
 
-    # 3. blobs
+    # blobs
     calls = [e for e in entries if e.get("type") == "tool_call" and e.get("response_hash")]
     bad_blobs = []
     for e in calls:
@@ -66,35 +70,74 @@ def verify_run(run_dir: Path, witness: bool = False) -> bool:
                 bad_blobs.append(e["seq"])
         except FileNotFoundError:
             bad_blobs.append(e["seq"])
-    check("blobs", not bad_blobs,
-          f"{len(calls)}/{len(calls)} stored responses match their hashes" if not bad_blobs else
-          f"response hash mismatch at receipt #{', #'.join(map(str, bad_blobs))} (stored API response was altered)")
+    if calls:
+        check("blobs", not bad_blobs,
+              f"{len(calls)}/{len(calls)} stored API responses match their hashes" if not bad_blobs else
+              f"response hash mismatch at receipt #{', #'.join(map(str, bad_blobs))} (stored API response was altered)")
 
-    # 4. facts
-    facts = load_facts(run_dir / "facts.json")
-    by_seq = {e["seq"]: e for e in entries}
-    bad_facts = []
-    parsed = {}
-    for fid, f in facts.items():
-        entry = by_seq.get(f["receipt_seq"])
-        if not entry or not entry.get("response_hash"):
-            bad_facts.append(fid)
-            continue
-        if entry["seq"] not in parsed:
-            try:
-                parsed[entry["seq"]] = json.loads(read_blob(run_dir, entry["response_hash"]))
-            except (FileNotFoundError, ValueError):
-                parsed[entry["seq"]] = None
-        if parsed[entry["seq"]] is None or resolve(parsed[entry["seq"]], f["pointer"]) != f["value"]:
-            bad_facts.append(fid)
-    check("facts", not bad_facts,
-          f"{len(facts)} facts re-resolved from raw responses" if not bad_facts else f"facts not backed by their receipts: {', '.join(bad_facts)}")
+    # facts
+    facts = load_facts(run_dir / "facts.json") if (run_dir / "facts.json").exists() else {}
+    if facts:
+        bad_facts, parsed = [], {}
+        for fid, f in facts.items():
+            entry = by_seq.get(f["receipt_seq"])
+            if not entry or not entry.get("response_hash"):
+                bad_facts.append(fid)
+                continue
+            if entry["seq"] not in parsed:
+                try:
+                    parsed[entry["seq"]] = json.loads(read_blob(run_dir, entry["response_hash"]))
+                except (FileNotFoundError, ValueError):
+                    parsed[entry["seq"]] = None
+            if parsed[entry["seq"]] is None or resolve(parsed[entry["seq"]], f["pointer"]) != f["value"]:
+                bad_facts.append(fid)
+        check("facts", not bad_facts, f"{len(facts)} facts re-resolved from raw responses" if not bad_facts
+              else f"facts not backed by their receipts: {', '.join(bad_facts[:8])}")
 
-    # 5. claims
+    # sealed files
     claim_set = next((e for e in reversed(entries) if e["type"] == "claim_set"), None)
-    files_ok = claim_set is not None and all(
-        sha256_hex((run_dir / name).read_bytes()) == claim_set[key]
-        for name, key in (("claims.json", "claims_hash"), ("facts.json", "facts_hash"), ("meta.json", "meta_hash")))
+    files = {"claims.json": "claims_hash", "facts.json": "facts_hash", "meta.json": "meta_hash", "round.json": "round_hash"}
+    files_ok = claim_set is not None and all(sha256_hex((run_dir / name).read_bytes()) == claim_set[key]
+                                             for name, key in files.items() if key in claim_set)
+
+    if kind == "pitch":
+        _verify_pitch(run_dir, meta, facts, by_seq, files_ok, entries, check)
+    elif kind == "scout":
+        _verify_scout(run_dir, meta, facts, entries, files_ok, check)
+    elif kind == "decide":
+        _verify_decide(run_dir, meta, entries, files_ok, check)
+
+    # actions
+    actions = [e for e in entries if e["type"] == "action"]
+    if actions:
+        allowed = _sealed_allowed_actions(entries)
+        not_allowed = [e["seq"] for e in actions if e["action"] not in allowed]
+        ungrounded = [e["seq"] for e in actions if e["action"] == "draft_email_to_outbox" and e.get("author", "").startswith("llm")
+                      and not grounded(e["body"], "\n".join(e.get("grounding_facts", [])) + "\n" + str(e.get("subject")))]
+        blocked = sum(1 for e in entries if e["type"] == "action_blocked")
+        check("actions", not not_allowed and not ungrounded,
+              f"{len(actions)} actions, each permitted by the sealed STRATEGY.md; drafted emails use only grounded numbers"
+              + (f"; {blocked} forbidden action(s) blocked" if blocked else "") if not not_allowed and not ungrounded else
+              f"actions outside the rulebook at #{not_allowed}" if not_allowed else f"ungrounded numbers in drafted email(s) at #{ungrounded}")
+
+    report = (run_dir / "report.md").read_text(encoding="utf-8")
+    report_entry = next((e for e in reversed(entries) if e["type"] == "report"), None)
+    if report_entry and sha256_hex(report.encode("utf-8")) != report_entry["report_hash"]:
+        check("report hash", False, "report was edited after sealing")
+
+    if witness:
+        results.append(_witness(entries))
+
+    passed = all(results)
+    console.print()
+    if passed:
+        console.print("[bold green]VERIFIED: every statement and action in this run traces to unaltered, signed receipts and rules.[/]")
+    else:
+        console.print("[bold red]FAILED: this run has been altered or does not reproduce. Do not rely on it.[/]")
+    return passed
+
+
+def _verify_pitch(run_dir, meta, facts, by_seq, files_ok, entries, check):
     claims = json.loads((run_dir / "claims.json").read_text(encoding="utf-8"))
     mismatched = []
     for c in claims:
@@ -104,35 +147,85 @@ def verify_run(run_dir: Path, witness: bool = False) -> bool:
                 mismatched.append(c["claim_id"])
             continue
         values = {name: (facts[fid]["value"] if fid else None) for name, fid in c["inputs"].items()}
-        status, explanation = evaluate(c["type"], c["params"], values, c["inputs"])
+        status, explanation = evaluate(c["type"], c["params"], values, c["inputs"], c.get("tol"))
         if status != c["status"] or explanation != c["explanation"]:
             mismatched.append(c["claim_id"])
     check("claims", files_ok and not mismatched,
-          f"{len(claims)} verdicts reproduced by re-running the comparators" if files_ok and not mismatched else
+          f"{len(claims)} verdicts reproduced with the sealed tolerances" if files_ok and not mismatched else
           ("claims/facts/meta files differ from the hashes sealed in the ledger" if not files_ok else
            f"verdicts do not reproduce for {', '.join(mismatched)}"))
-
-    # 6. report
-    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
     report = (run_dir / "report.md").read_text(encoding="utf-8")
-    report_entry = next((e for e in reversed(entries) if e["type"] == "report"), None)
-    hash_ok = report_entry is not None and sha256_hex(report.encode("utf-8")) == report_entry["report_hash"]
-    render_ok = render_report(meta, claims, facts) == report
-    check("report", hash_ok and render_ok,
-          "memo re-renders byte-for-byte from claims + facts; no unbacked text" if hash_ok and render_ok else
-          ("memo was edited after sealing (hash mismatch)" if not hash_ok else "memo does not match what its claims and facts produce"))
+    check("report", render_report(meta, claims, facts) == report,
+          "memo re-renders byte-for-byte from claims + facts; no unbacked text")
 
-    # 7. witness
-    if witness:
-        results.append(_witness(entries))
 
-    passed = all(results)
-    console.print()
-    if passed:
-        console.print("[bold green]VERIFIED: every statement in this memo traces to an unaltered, signed API receipt.[/]")
-    else:
-        console.print("[bold red]FAILED: this run has been altered or does not reproduce. Do not rely on the memo.[/]")
-    return passed
+def _verify_scout(run_dir, meta, facts, entries, files_ok, check):
+    candidates = json.loads((run_dir / "round.json").read_text(encoding="utf-8"))
+    model_entry = next(e for e in entries if e["type"] == "model_state")
+    model_ok = model_entry["model"] == meta["model"]
+    bad = []
+    for c in candidates:
+        values = {k: (facts[fid]["value"] if fid else None) for k, fid in c["refs"].items()}
+        values["company_id"] = c["company_id"]
+        feats = compute(values, meta["as_of"])
+        pred = learn.predict(meta["model"], feats["vector"])
+        if feats["vector"] != c["vector"] or feats["raw"] != c["raw"] or abs(pred["probability"] - c["probability"]) > 1e-9:
+            bad.append(c["n"])
+    check("features & scores", files_ok and model_ok and not bad,
+          f"{len(candidates)} feature vectors recomputed from facts and re-scored with the sealed model" if files_ok and model_ok and not bad
+          else ("sealed files or model differ" if not (files_ok and model_ok) else f"rows {bad} do not reproduce"))
+    pred_entry = next(e for e in entries if e["type"] == "predictions")
+    derived = [{"n": c["n"], "company_id": c["company_id"], "name": c["name"], "probability": c["probability"],
+                "predicted_pick": c["predicted_pick"], "recommendation": c["recommendation"]} for c in candidates]
+    check("sealed predictions", pred_entry["predictions"] == derived and pred_entry["seq"] == meta["predictions_seq"],
+          f"predictions committed at entry #{pred_entry['seq']}, before any human decision")
+    report = (run_dir / "report.md").read_text(encoding="utf-8")
+    check("report", render_round(meta, candidates, facts) == report, "round report re-renders byte-for-byte")
+
+
+def _verify_decide(run_dir, meta, entries, files_ok, check):
+    ref = next(e for e in entries if e["type"] == "reference")
+    scout_dir = RUNS_DIR / ref["scout_run_id"]
+    scout_entries = read_ledger(scout_dir)
+    pred_entry = next((e for e in scout_entries if e["seq"] == ref["predictions_seq"]), None)
+    scout_sealed = json.loads((scout_dir / "head.sig").read_text(encoding="utf-8"))
+    ref_ok = (pred_entry is not None and pred_entry["entry_hash"] == ref["predictions_entry_hash"]
+              and scout_sealed["head_hash"] == ref["scout_head_hash"] and verify_signature(scout_sealed))
+    human = next(e for e in entries if e["type"] == "human_decision")
+    picked = {d["company_id"] for d in human["decisions"] if d["picked"]}
+    agreement = learn.agreement(pred_entry["predictions"], picked) if pred_entry else None
+    check("predictions came first", ref_ok and agreement == meta["agreement"],
+          f"agreement {agreement['decisions_matched']}/{agreement['total']} recomputed against predictions sealed in "
+          f"{ref['scout_run_id']} before the human decided" if ref_ok and agreement == meta["agreement"]
+          else "referenced predictions are missing, altered, or the agreement score does not reproduce")
+    training = json.loads((run_dir / "training_set.json").read_text(encoding="utf-8"))
+    model_entry = next(e for e in entries if e["type"] == "model_state")
+    rows = [{"features": {"vector": t["vector"]}, "label": t["label"]} for t in training]
+    import re
+    import yaml
+    strategy_text = next(e for e in entries if e["type"] == "strategy")["text"]
+    strategy = yaml.safe_load(re.search(r"```yaml\n(.*?)```", strategy_text, re.S).group(1))
+    refit = learn.fit(rows, strategy)
+    same = (sha256_hex((run_dir / "training_set.json").read_bytes()) == model_entry["training_set_hash"]
+            and all(abs(refit["weights"][f] - model_entry["model"]["weights"][f]) < 1e-6 for f in refit["weights"]))
+    check("learning", files_ok and same,
+          f"model re-fitted from {len(training)} recorded decisions under the sealed STRATEGY.md: same weights" if files_ok and same
+          else "re-fitting the recorded decisions does not give the sealed model")
+    report = (run_dir / "report.md").read_text(encoding="utf-8")
+    check("report", render_decision(meta, meta["decisions"], meta["agreement"], meta["learned"]) == report,
+          "decision report re-renders byte-for-byte")
+
+
+def _sealed_allowed_actions(entries) -> set:
+    import re
+    import yaml
+    strategy_entry = next((e for e in entries if e["type"] == "strategy"), None)
+    if not strategy_entry:
+        return set()
+    rules = yaml.safe_load(re.search(r"```yaml\n(.*?)```", strategy_entry["text"], re.S).group(1))
+    if sha256_hex(strategy_entry["text"].encode("utf-8")) != strategy_entry["text_hash"]:
+        return set()
+    return set(rules.get("actions", {}).get("allowed", [])) - set(rules.get("actions", {}).get("forbidden", []))
 
 
 def _witness(entries: list[dict]) -> bool:
@@ -164,6 +257,9 @@ def _witness(entries: list[dict]) -> bool:
                 problems.append("credits")
             if problems:
                 failures.append(f"#{e['seq']} differs from usage log ({', '.join(problems)})")
+    if not seen:
+        info("witness: no live API calls in this run")
+        return True
     passed = not failures
     (ok if passed else bad)(
         f"witness: {len(seen)}/{len(seen)} calls confirmed by Crustdata's usage log (endpoint, request body, status, credits)"

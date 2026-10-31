@@ -1,77 +1,94 @@
 # Receipts
 
-**A diligence agent whose every claim carries a verifiable receipt.**
+**An autonomous deal-screening agent for venture funds. It acts only inside your written rules, learns your taste from your decisions, and proves every claim and action with signed API receipts.**
 
-Paste a founder's pitch. The agent extracts every checkable claim, resolves the company and people to Crustdata's canonical identity graph, checks each claim with deterministic comparators, and writes a diligence memo. Every sentence in the memo points to a **receipt**: a hashed, chained, Ed25519-signed record of the raw Crustdata API response. Anyone can re-check the memo later with `verify`. No LLM is involved in verification, and Crustdata's own usage log serves as an independent witness.
+Built for ContextCon IIT Bombay (Crustdata × Y Combinator). Themes: Investing, and Infrastructure for agents (cryptographic execution trails, rule-checkers).
 
-Built for ContextCon IIT Bombay (Crustdata × Y Combinator). Themes: Infrastructure for agents (cryptographic execution trails) and Investing (diligence).
+## The manual work it replaces
+An analyst at a fund spends 1–2 hours per company:
+1. Find companies that fit the thesis, or read an inbound pitch.
+2. Work out which company it really is.
+3. Check headcount, funding, team and hiring across LinkedIn, Crunchbase and Google.
+4. Decide.
+5. Email the founders.
+6. Update the CRM.
+
+None of it is auditable afterwards.
+
+## What the user does vs what the agent does
+| Step | You | Agent | Output |
+|---|---|---|---|
+| Set strategy | Edit `strategy/STRATEGY.md` once: thesis, ± tolerances, guardrails, autonomy limits, allowed actions | Seals the full rulebook text into every run | Rules in force, provable later |
+| Source | Run `scout`, or drop an inbound pitch | Searches Crustdata for thesis-fit companies (skipping ones already on the board), or extracts every claim from a pitch with an LLM | Candidates / claims |
+| Identify | — | Resolves companies and people to Crustdata IDs. **Refuses to guess** when ambiguous ("Mercury" = 25 companies; "our CTO Max" = 6 Maxes) | Logged decisions |
+| Investigate | — | Calls Crustdata enrich / person search / job search; every response stored and hashed as a receipt | Receipt-backed facts |
+| Judge | — | Code compares claims to facts within the strategy's ± margins; scores companies with your learned preferences; detects bad source data | Verdicts, p(you pick) |
+| Commit | — | **Seals its predictions into the signed ledger before you decide** | Tamper-proof forecast |
+| Act | — | Within its autonomy limits: updates the deal board, drafts founder emails to `outbox/` (never sent, per handbook rule 4), archives the signed trail. Below its confidence threshold, or before it has learned enough, it queues the deal for you. | Executed actions, each citing the rule that allowed it |
+| Decide | Pick the companies you want (`decide --pick 2,5,7`) | Scores itself against its sealed predictions, executes your decisions, re-fits its model of your preferences, and explains what it learned | Agreement score, updated preferences |
+| Audit | `verify` any run, any time | Recomputes everything; no LLM involved | ✔ / ✘ |
 
 ## Quick start
-
 ```bash
-pip install -r requirements.txt
-cp .env.example .env        # add CRUSTDATA_API_KEY (ANTHROPIC_API_KEY optional)
+pip install -r requirements.txt pyyaml numpy
+cp .env.example .env              # CRUSTDATA_API_KEY; OLLAMA_API_KEY optional (minimax-m3, falls back to gemma4:31b)
 
-python -m receipts run --pitch fixtures/pitches/01_mercury_planted_lies.txt
-python -m receipts verify last --witness
-python -m receipts tamper last && python -m receipts verify last    # watch it fail
+python -m receipts scout                      # round of 10 thesis-fit companies, predictions sealed
+python -m receipts decide --round 1 --pick 1,4,5   # your real choices; agent scores itself and learns
+python -m receipts scout                      # next round uses what it learned
+python -m receipts board                      # deal board
+python -m receipts learned                    # what it learned + agreement per round
+python -m receipts run --pitch fixtures/pitches/01_mercury_planted_lies.txt   # verify an inbound pitch
+python -m receipts verify last --witness      # re-prove a run, incl. Crustdata's own usage log
+python -m receipts tamper last && python -m receipts verify last              # watch it fail
 ```
 
-## What it catches (live run on a team-written pitch with planted lies)
-
-| Claim in pitch | Verdict | Evidence |
-|---|---|---|
-| "Mercury Technologies" (no domain) | resolved, not guessed | identify returns 25 candidates; the real fintech ranks only 0.6. Resolved to ID 631990 because founder Immad Akhund currently works there (person search). |
-| "a team of 3,000 people" | ❌ CONTRADICTED | headcount 1,782 [receipt] |
-| "$200M Series D led by Accel" | ❌ CONTRADICTED | Series D on 2026-05-20, lead investor TCV [receipt] |
-| "Our CTO Max previously worked at Google" | ⚠️ UNSUPPORTED | Mercury has 6 people named Max; the one holding the CTO role is Maximilian Tagher, whose history shows Heyzap, no Google [receipt] |
-| "hiring heavily in engineering" | ✅ VERIFIED | 331 of 1,752 open roles are Engineering [receipt] |
-
-## How it works
-
-```
-pitch ─► extract claims (Claude structured output, or rule-based fallback)
-      ─► resolve company: domain → identify; name → candidates → re-rank → founder cross-check → RESOLVED | AMBIGUOUS | NOT_FOUND
-      ─► gather: /company/enrich (narrow fields), /person/search (role-aware person resolution), /job/search
-      ─► every response: raw bytes → blobs/sha256/<hash>; ledger entry {request, response_hash, X-Request-ID, X-Credits-Used, prev_hash, entry_hash}
-      ─► facts F1..Fn = JSON-pointer lookups into those raw responses
-      ─► deterministic comparators → VERIFIED / PARTIAL / CONTRADICTED / UNSUPPORTED / UNVERIFIABLE
-      ─► memo rendered purely from claims + facts → sealed with an Ed25519 signature over the chain head
-```
-
-| Step | Done by |
+## Bounded autonomy (`strategy/STRATEGY.md`)
+| Section | What it controls |
 |---|---|
-| Claim extraction | LLM (optional) or rules |
-| Entity and person resolution, comparisons, arithmetic, memo text | Code |
-| Facts | Crustdata REST API (`x-api-version: 2025-11-01`) |
-| Verification | Code only |
+| `thesis` | Hard filters: sector, HQ countries, headcount, stage, raised since. |
+| `tolerances` | ± margins for claims (e.g. headcount ±15% = verified, ±40% = partial). |
+| `guardrails` | Hard rules learning can't override: contradicted claims block ADVANCE; 3 contradictions mean PASS; ambiguous entities go to a human; unstable data is never held against a company. |
+| `autonomy` | Act alone only if confidence ≥ 0.80 **and** ≥ 10 of your decisions have been learned. Otherwise the agent queues for you. |
+| `actions` | Allowed: `update_deal_board`, `draft_email_to_outbox`, `archive_signed_trail`. Forbidden: `send_external_email`, `contact_any_person`. Forbidden actions are blocked and logged. |
+| `learning` | Your stated prior preferences, how strongly they anchor learning, and weight bounds. |
 
-## `verify` checks
+## Preference learning
+- **Model.** Bayesian logistic regression over receipt-backed features: headcount growth, engineering hiring share, open roles, time since last round, team size, funding, stage, and age. It starts from the stated thesis, and each pick or reject moves it. A Laplace approximation gives its confidence, so it defers to you while uncertain.
+- **Honest scoring.** Predictions are sealed before you choose, and agreement ("matched 8/10", "you picked 2 of my top 3") is computed afterwards. Nobody, including us, can edit the forecast after seeing your picks.
+- **Re-checkable.** The model is a deterministic function of your recorded decisions; `verify` re-fits it and gets the same weights.
+- **Honest limit.** With 10–20 decisions the model is still weak. Agreement is noisy round to round (synthetic test: 0.7–0.9), and it improves as decisions accumulate. We report it; we don't promise it.
 
-1. **Chain:** every `entry_hash` recomputes; `prev_hash` links and sequence are intact.
-2. **Signature:** Ed25519 over the chain head.
-3. **Blobs:** every stored API response re-hashes to its ledger `response_hash`.
-4. **Facts:** every fact re-resolves from the raw response to the same value.
-5. **Claims:** every verdict reproduces by re-running the comparator.
-6. **Report:** the memo re-renders byte-for-byte, so it contains no text or number without a source.
-7. **Witness** (`--witness`): every call matches Crustdata's `/account/usage/events/{X-Request-ID}`: endpoint, request body, status, credits.
+## What `verify` checks
+- **Every run:**
+  - The hash chain and Ed25519 signature are intact.
+  - Every stored API response re-hashes correctly.
+  - Every fact re-resolves from the raw bytes.
+  - Every action was permitted by the *sealed* rulebook.
+  - Every LLM-drafted email uses only numbers present in its grounding facts.
+- **Pitch runs:**
+  - Each verdict re-runs with the sealed tolerances.
+  - The memo re-renders byte-for-byte, so it contains no text without a source.
+- **Scout runs:**
+  - The features are recomputed from facts.
+  - The scores are recomputed with the sealed model.
+  - The predictions are sealed before any decision.
+- **Decide runs:**
+  - The referenced predictions are intact and pre-date the decision.
+  - The agreement score is recomputed.
+  - The model is re-fitted from the training set.
+- **`--witness`:** each call matches Crustdata's `/account/usage/events/{X-Request-ID}` (endpoint, request body, status, credits).
 
-**Honest limitation:** the usage log proves each call happened with those parameters at that time, but it does not store response bodies. Whoever holds the signing key could rebuild and re-sign a fully rewritten chain. Mitigation: publish or commit the head hash when the memo is shared.
+**Limitation:** the usage log proves each call happened with those parameters, but it doesn't store response bodies. Publish or commit the head hash when sharing results.
 
-## Robustness built in
-
-- **Ambiguous company names:** a decision entry lists the candidates, and the agent never guesses.
-- **Ambiguous people:** "Max" is matched to the person who holds the claimed role, and the choice is logged.
-- **Noisy data:** an unstable headcount series is reported as UNVERIFIABLE (data unstable) with an anomaly entry, never as CONTRADICTED.
-- **Failed calls** are logged as receipts and retried with backoff.
-- **Responses are cached by request hash,** because dropped connections are still billed.
-- **Missing data** becomes UNVERIFIABLE with the reason.
+## LLM use (Ollama)
+The LLM handles claim extraction from pitches and the wording of drafted emails. Models are tried in order: `OLLAMA_MODELS` (default `minimax-m3,gemma4:31b`). A model the account can't use (e.g. HTTP 402) is skipped, and the model that actually ran is recorded in the ledger. If no LLM is available, a rule-based extractor and email templates take over. Verification never uses an LLM.
 
 ## Layout
-
 ```
-receipts/   proxy.py ledger.py facts.py resolve.py extract.py claims.py agent.py render.py verify.py __main__.py
-fixtures/   test pitches (team-written; planted lies labeled)
-runs/       one folder per run: ledger.jsonl, blobs/, facts.json, claims.json, meta.json, report.md, head.sig
-docs/       hackathon handbook; planning documents
+strategy/   STRATEGY.md (the rulebook), LEARNED.md (generated)
+receipts/   proxy ledger facts resolve extract claims features learn scout decide actions board compose llm render verify
+fixtures/   test pitches (team-written; planted lies labelled)
+tests/      offline tests (learner test uses synthetic decisions only)
+runs/       one signed folder per run · data/ deal board + model · outbox/ drafted emails
 ```
