@@ -23,12 +23,12 @@ ENRICH_FIELDS = [
     "basic_info.name", "basic_info.primary_domain", "basic_info.year_founded",
     "headcount.total", "headcount.timeseries",
     "funding.total_investment_usd", "funding.milestones",
-    "revenue.estimated",
+    "revenue.estimated", "headcount.by_region_absolute",
 ]
 COMPANY = "/0/matches/0/company_data"
 INPUTS_BY_TYPE = {
     "founded_year": ["year_founded"],
-    "headcount": ["headcount_total", "timeseries"],
+    "headcount": ["headcount_total", "timeseries", "regions"],
     "total_funding": ["total_investment_usd"],
     "round": ["milestones"],
     "person_role": ["company_id", "current_profile", "past_profile", "current_count", "past_count"],
@@ -138,6 +138,7 @@ def _gather(client, facts, refs, unavailable, company_id, claims):
             ("milestones", f"{COMPANY}/funding/milestones", "Funding rounds (dated)"),
             ("revenue_lower", f"{COMPANY}/revenue/estimated/lower_bound_usd", "Modeled revenue estimate, lower bound"),
             ("revenue_upper", f"{COMPANY}/revenue/estimated/upper_bound_usd", "Modeled revenue estimate, upper bound"),
+            ("regions", f"{COMPANY}/headcount/by_region_absolute", "Headcount by region"),
         ]:
             f = facts.add(r, pointer, label)
             refs[name] = f.id if f else None

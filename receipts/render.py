@@ -153,8 +153,13 @@ def render_round(meta: dict, candidates: list[dict], facts: dict[str, dict]) -> 
     if meta.get("thesis_request") and meta["thesis_request"].get("unmapped"):
         lines.append(f"**Not used as filters (judge these yourself):** {'; '.join(meta['thesis_request']['unmapped'])}  ")
     lines.append("")
-    lines.append("| # | Company | Team | Growth YoY | Last round | Open roles (eng) | p(you pick) | Agent | Why |")
-    lines.append("|---|---|---|---|---|---|---|---|---|")
+    people = any("founders" in c["raw"] for c in candidates)
+    if people:
+        lines.append("| # | Company | Team | Growth YoY | Last round | Open roles (eng) | Founders (people graph) | p(you pick) | Agent | Why |")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|")
+    else:
+        lines.append("| # | Company | Team | Growth YoY | Last round | Open roles (eng) | p(you pick) | Agent | Why |")
+        lines.append("|---|---|---|---|---|---|---|---|---|")
     for c in candidates:
         raw, refs = c["raw"], c["refs"]
         growth = "excluded (unstable data)" if raw.get("growth_excluded") else (
@@ -164,8 +169,9 @@ def render_round(meta: dict, candidates: list[dict], facts: dict[str, dict]) -> 
                f"{fref(refs, 'last_round_type')}").strip()
         roles = f"{raw.get('open_roles', 0)} ({raw.get('eng_roles', 0)}) {fref(refs, 'job_buckets')}"
         agent = f"{REC_ICONS[c['recommendation']]} {c['recommendation']}" + (" · auto" if c["auto_act"] else " · queued")
+        founders_cell = f"{escape(founder_summary(raw.get('founders')))} {fref(refs, 'founders')} | " if people else ""
         lines.append(f"| {c['n']} | **{escape(c['name'])}** ({escape(c['domain'] or 'no domain')}) | {team} | {growth} | {escape(rnd)} | "
-                     f"{roles} | {c['probability']:.2f} | {agent} | {escape(', '.join(c['why']) or '—')} |")
+                     f"{roles} | {founders_cell}{c['probability']:.2f} | {agent} | {escape(', '.join(c['why']) or '—')} |")
     lines.append("")
     lines.append("## Why each recommendation (rule in force)")
     lines.append("")
@@ -214,6 +220,18 @@ def render_decision(meta: dict, decisions: list[dict], agreement: dict, learned:
         lines.append(f"| {f.replace('_', ' ')} | {before:+.2f} | {w[f]:+.2f} |")
     lines.append("")
     return "\n".join(lines)
+
+
+def founder_summary(f: dict | None) -> str:
+    if not f:
+        return "none listed"
+    if not f["verified"]:
+        return f"{f['listed']} listed, none verified at this company"
+    tags = [t for t, on in (("technical", f["technical"]), ("repeat founder", f["repeat_founder"])) if on]
+    if f["big_tech"]:
+        tags.append("ex-" + "/".join(f["big_tech"][:3]))
+    names = ", ".join(v["name"] for v in f["verified"][:3])
+    return f"{names} ({len(f['verified'])} of {f['listed']} listed verified){'; ' + ', '.join(tags) if tags else ''}"
 
 
 def fref(refs: dict, name: str) -> str:

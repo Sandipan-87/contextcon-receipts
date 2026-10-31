@@ -5,6 +5,7 @@ so verify can recompute each feature vector from the raw bytes.
 """
 
 import math
+import re
 from datetime import date
 
 from .claims import headcount_stability
@@ -101,6 +102,11 @@ def compute(v: dict, as_of: str) -> dict:
         else:
             center, scale = SCALE[name]
             vector[name] = round(max(-3.0, min(3.0, (value - center) / scale)), 6)
+    # Optional people-graph and identity signals: only when the run requested them (keeps older runs reproducible).
+    if "founders" in v:
+        raw["founders"] = founder_signals(v.get("founders"), v.get("company_id"))
+    if "regions" in v:
+        raw["identity_collision"] = identity_collision(v.get("regions"), headcount)
     return {"raw": raw, "vector": vector, "missing": missing, "stable_headcount": stable}
 
 
@@ -114,3 +120,59 @@ def thesis_violations(raw: dict, country: str | None, strategy: dict) -> list[st
     if rounds and raw.get("last_round_type") and raw["last_round_type"] not in rounds:
         problems.append(f"thesis.last_round {rounds} (has {raw['last_round_type']})")
     return problems
+
+
+# ---------------------------------------------------------------- people graph & identity checks
+# Display-and-guardrail signals (not model features), so adding them does not change the learned model.
+
+FOUNDER_TITLE = re.compile(r"\b(co-?\s?founder|founder)\b", re.I)
+NOT_FOUNDER = re.compile(r"\b(assistant|associate|advisor|adviser|office of|chief of staff)\b.*\bfounder|\bto (the )?(co-?)?founder", re.I)
+TECH_TITLE = re.compile(r"\b(cto|engineer|engineering|developer|architect|scientist|technical|software|sde|programmer)\b", re.I)
+BIG_TECH = {"google", "microsoft", "amazon", "meta", "facebook", "apple", "netflix", "stripe", "uber", "airbnb", "linkedin",
+            "salesforce", "oracle", "adobe", "nvidia", "intel", "ibm", "cisco", "twitter", "paypal", "flipkart", "razorpay",
+            "swiggy", "zomato", "paytm", "phonepe", "freshworks", "zoho", "cred", "ola", "meesho", "zerodha", "atlassian",
+            "goldman sachs", "mckinsey", "bain", "boston consulting group", "jpmorgan", "morgan stanley"}
+
+
+def founder_signals(founders: list | None, company_id) -> dict | None:
+    """Verify listed founders (a current role at THIS company with a founder title) and summarise their backgrounds."""
+    if founders is None:
+        return None
+    cid = str(company_id)
+    verified = []
+    for p in founders:
+        name = (p.get("basic_profile") or {}).get("name")
+        jobs = (p.get("experience") or {}).get("employment_details") or {}
+        here = [j for j in jobs.get("current") or [] if cid in [str(x) for x in (j.get("employer_company_id") or [])]]
+        titles_here = [j.get("employee_title") or "" for j in here]
+        if not name or not any(FOUNDER_TITLE.search(t) and not NOT_FOUNDER.search(t) for t in titles_here):
+            continue
+        past = [j for j in jobs.get("past") or [] if cid not in [str(x) for x in (j.get("employer_company_id") or [])]]
+        all_titles = titles_here + [j.get("employee_title") or "" for j in past]
+        big = sorted({(j.get("employer_name") or "").strip() for j in past
+                      if (j.get("employer_name") or "").strip().lower() in BIG_TECH})
+        verified.append({
+            "name": name,
+            "title": "; ".join(t for t in titles_here if t),
+            "technical": any(TECH_TITLE.search(t) for t in all_titles),
+            "repeat_founder": any(FOUNDER_TITLE.search(j.get("employee_title") or "") for j in past),
+            "big_tech": big,
+        })
+    return {
+        "listed": len(founders),
+        "verified": verified,
+        "technical": any(f["technical"] for f in verified),
+        "repeat_founder": any(f["repeat_founder"] for f in verified),
+        "big_tech": sorted({b for f in verified for b in f["big_tech"]}),
+    }
+
+
+def identity_collision(regions: dict | None, total) -> str | None:
+    """A single region larger than the whole company suggests the record is merged with another entity.
+    Uses the largest single region, never a sum (regions overlap: 'United States' contains 'California')."""
+    if not regions or not total:
+        return None
+    region, count = max(regions.items(), key=lambda kv: kv[1] or 0)
+    if (count or 0) > 1.3 * total:
+        return f"region '{region}' reports {count:,} employees but the company total is {total:,} (record may be merged with another entity)"
+    return None

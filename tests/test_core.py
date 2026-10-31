@@ -78,3 +78,26 @@ def test_learner_recovers_hidden_preference_synthetic():
 def test_fit_is_deterministic():
     rows = [{"features": {"vector": {f: (i % 3 - 1) * 0.5 for f in FEATURES}}, "label": i % 2} for i in range(12)]
     assert json.dumps(learn.fit(rows, STRATEGY)) == json.dumps(learn.fit(rows, STRATEGY))
+
+
+def test_founder_verification_filters_noise():
+    from receipts.features import founder_signals
+    def person(name, title, cid, past=()):
+        return {"basic_profile": {"name": name}, "experience": {"employment_details": {
+            "current": [{"employer_company_id": [str(cid)], "employee_title": title}],
+            "past": [{"employer_company_id": ["1"], "employer_name": n, "employee_title": t} for n, t in past]}}}
+    founders = [
+        person("Real Founder", "Co-Founder & CTO", 42, past=[("Google", "Software Engineer"), ("OldCo", "Founder")]),
+        person("Assistant", "Executive Assistant to Co-Founder/Co-CEO", 42),   # title mentions founder, is not one
+        person("Elsewhere", "Founder", 999),                                     # founder of a different company
+    ]
+    s = founder_signals(founders, 42)
+    assert s["listed"] == 3 and [v["name"] for v in s["verified"]] == ["Real Founder"]
+    assert s["technical"] and s["repeat_founder"] and s["big_tech"] == ["Google"]
+
+
+def test_identity_collision_uses_largest_single_region_not_sum():
+    from receipts.features import identity_collision
+    overlapping = {"United States": 1250, "California, United States": 337, "San Francisco Bay Area": 218}
+    assert identity_collision(overlapping, 1782) is None          # sum exceeds total, but regions overlap
+    assert "merged" in identity_collision({"India": 5200}, 900)

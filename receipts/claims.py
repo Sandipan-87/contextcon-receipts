@@ -60,6 +60,11 @@ def _headcount(p, x, r, t):
     if total is None:
         return UNVERIFIABLE, "Crustdata has no headcount for this company."
     claimed = p["value"]
+    if x.get("regions"):
+        from .features import identity_collision
+        merged = identity_collision(x["regions"], total)
+        if merged:
+            return UNVERIFIABLE, f"Crustdata's record looks unreliable, so the claim cannot be judged: {merged} {cite(r, 'regions')}."
     stable, why = headcount_stability(total, x.get("timeseries"), t["unstable_series_swing"], t["total_vs_series"])
     if not stable:
         return UNVERIFIABLE, (f"Crustdata headcount data is unstable, so the claim cannot be judged: {why} "

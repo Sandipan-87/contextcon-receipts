@@ -16,7 +16,8 @@ from .proxy import CrustdataClient, ToolError
 MODEL_PATH = ROOT / "data" / "model.json"
 ENRICH_FIELDS = ["basic_info.name", "basic_info.primary_domain", "basic_info.year_founded", "headcount.total",
                  "headcount.growth_percent", "headcount.timeseries", "funding.total_investment_usd",
-                 "funding.last_round_type", "funding.last_fundraise_date"]
+                 "funding.last_round_type", "funding.last_fundraise_date",
+                 "people.founders", "headcount.by_region_absolute"]
 
 
 def current_model(strategy: dict) -> dict:
@@ -148,6 +149,8 @@ def scout(strategy: dict, strategy_text: str, n: int = 10, round_no: int | None 
                 ("total_funding", f"{base}/funding/total_investment_usd", "Total funding (USD)"),
                 ("last_round_type", f"{base}/funding/last_round_type", "Last round type"),
                 ("last_fundraise_date", f"{base}/funding/last_fundraise_date", "Last fundraise date"),
+                ("founders", f"{base}/people/founders", "Founders listed in the people graph"),
+                ("regions", f"{base}/headcount/by_region_absolute", "Headcount by region"),
             ]:
                 f = facts.add(enrich, pointer, label)
                 refs[name] = f.id if f else None
@@ -163,6 +166,8 @@ def scout(strategy: dict, strategy_text: str, n: int = 10, round_no: int | None 
             rec, rule, auto = "NEEDS_HUMAN", "no enrichment data returned; cannot judge", False
         elif violations:
             rec, rule, auto = "PASS", "hard thesis filter: " + "; ".join(violations), True
+        elif feats["raw"].get("identity_collision"):
+            rec, rule, auto = "NEEDS_HUMAN", "guardrails.identity_collision: " + feats["raw"]["identity_collision"], False
         elif len(feats["missing"]) >= 4:
             rec, rule, auto = "NEEDS_HUMAN", f"too little data ({', '.join(feats['missing'])} missing)", False
         else:

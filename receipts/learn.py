@@ -73,17 +73,32 @@ def learned_summary(strategy: dict, model: dict, rows: list[dict]) -> list[str]:
     rejects = [r for r in rows if r["label"] == 0]
     lines = [f"Learned from {len(rows)} decisions ({len(picks)} picks, {len(rejects)} rejects)."]
     shifts = sorted(FEATURES, key=lambda f: -abs(model["weights"][f] - float(prior.get(f, 0.0))))
+    hidden = 0
     for f in shifts:
         before, after = float(prior.get(f, 0.0)), model["weights"][f]
         if abs(after - before) < 0.15:
             continue
+        a, b = _medians(f, picks), _medians(f, rejects)
+        # Only state a preference when the raw data points the same way as the learned shift. Features are
+        # correlated, so a weight can move against the raw medians; saying so in words would mislead.
+        if a is not None and b is not None and (a == b or (a > b) != (after > before)):
+            hidden += 1
+            continue
         lean = DIRECTION[f][0] if after > before else DIRECTION[f][1]
-        evidence = _evidence(f, picks, rejects)
+        evidence = f": median {_fmt(f, a)} for your picks vs {_fmt(f, b)} for rejects" if a is not None and b is not None else ""
         lines.append(f"Your decisions lean toward {lean} more than the stated thesis did "
                      f"({LABELS[f]}: weight {before:+.2f} → {after:+.2f}){evidence}.")
+    if hidden:
+        lines.append(f"{hidden} smaller adjustment{'s are' if hidden > 1 else ' is'} not described because your raw picks don't clearly "
+                     "show it on their own (they come from how features combine).")
     if len(lines) == 1:
         lines.append("Your decisions so far match the stated thesis; no preference has shifted noticeably.")
     return lines
+
+
+def _medians(feature: str, rows: list[dict]):
+    vals = sorted(r["features"]["raw"].get(feature) for r in rows if r["features"]["raw"].get(feature) is not None)
+    return vals[len(vals) // 2] if vals else None
 
 
 def _evidence(feature: str, picks: list[dict], rejects: list[dict]) -> str:
@@ -104,7 +119,7 @@ def _fmt(feature: str, value) -> str:
     if feature == "total_funding":
         return f"${value / 1e6:,.0f}M"
     if feature == "months_since_round":
-        return f"{value:.0f} months"
+        return f"{value:.0f} month{'s' if round(value) != 1 else ''}"
     if feature == "company_age":
         return f"{value} years"
     return f"{value:,}" if isinstance(value, int) else str(value)

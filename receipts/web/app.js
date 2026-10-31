@@ -98,7 +98,7 @@ async function renderRound(r) {
       <span class="small">The agent has learned from <b>${m.n_decisions}</b> of your decisions. Its predictions were sealed in the signed ledger before you see this page.
       <label style="margin-left:10px"><input type="checkbox" id="reveal"> reveal the agent's sealed prediction (pick blind for a fair score)</label></span></div></div>
     ${thesisBox(run.meta)}
-    <div class="card" style="padding:0"><table><thead><tr><th>Pick</th><th>Company</th><th>Team</th><th>Growth YoY</th><th>Last round</th><th>Open roles (eng)</th><th class="agentcol">Agent prediction</th><th class="agentcol">Why</th></tr></thead><tbody>
+    <div class="card" style="padding:0"><table><thead><tr><th>Pick</th><th>Company</th><th>Team</th><th>Growth YoY</th><th>Last round</th><th>Open roles (eng)</th>${run.candidates.some(c => "founders" in c.raw) ? "<th>Founders (people graph)</th>" : ""}<th class="agentcol">Agent prediction</th><th class="agentcol">Why</th></tr></thead><tbody>
     ${run.candidates.map(c => {
       const x = c.raw, refs = c.refs, F = k => refs[k] ? ` <button class="fact" onclick="openFact('${r.run_id}','${refs[k]}')">${refs[k]}</button>` : "";
       return `<tr><td><input type="checkbox" class="pick" value="${c.n}"></td>
@@ -106,7 +106,8 @@ async function renderRound(r) {
         <td>${x.headcount != null ? x.headcount.toLocaleString() : "n/a"}${F("headcount_total")}</td>
         <td>${x.growth_excluded ? `<span class="small muted">excluded: unstable data</span>` : x.growth_yoy != null ? `${x.growth_yoy > 0 ? "+" : ""}${Math.round(x.growth_yoy)}%` : "n/a"}${x.growth_excluded ? "" : F("growth_yoy")}</td>
         <td>${esc((x.last_round_type || "n/a").replace("_", " "))}<br><span class="small muted">${esc(x.last_fundraise_date || "")}</span>${F("last_round_type")}</td>
-        <td>${x.open_roles ?? 0} (${x.eng_roles ?? 0})${F("job_buckets")}</td>
+        <td>${x.open_roles ?? 0} (${x.eng_roles ?? 0})${F("job_buckets")}${x.identity_collision ? `<br>${chip("⚠ possible merged record", "CONTRADICTED")}` : ""}</td>
+        ${"founders" in x ? `<td class="small">${founderCell(x.founders)}${F("founders")}</td>` : ""}
         <td class="agentcol hiddencol">${chip(c.predicted_pick ? "predicts pick" : "predicts reject", c.predicted_pick ? "pick" : "reject")}<br>
           <span class="small">p ${pct(c.probability)} · ${chip(c.recommendation)}</span><br><span class="small muted">${c.auto_act ? "acted alone" : "queued for you"}</span></td>
         <td class="agentcol hiddencol small">${esc((c.why || []).join(", "))}<br><span class="muted">${esc(c.rule)}</span></td></tr>`;
@@ -120,6 +121,16 @@ async function renderRound(r) {
     try { await runJob(`Recording your picks for round ${r.round_no}`, "/api/decide", {round_no: r.round_no, picks}); await loadRounds(r.run_id); }
     catch (e) { alert(e.message); }
   };
+}
+
+function founderCell(f) {
+  if (!f) return "<span class='muted'>none listed</span>";
+  if (!f.verified.length) return `<span class="muted">${f.listed} listed, none verified here</span>`;
+  const tags = [];
+  if (f.technical) tags.push(chip("technical", "VERIFIED"));
+  if (f.repeat_founder) tags.push(chip("repeat founder", "VERIFIED"));
+  if (f.big_tech.length) tags.push(chip("ex-" + f.big_tech.slice(0, 2).join("/"), "VERIFIED"));
+  return `${f.verified.slice(0, 3).map(v => `<b>${esc(v.name)}</b>`).join(", ")}<br><span class="muted">${f.verified.length} of ${f.listed} listed verified</span><br>${tags.join(" ")}`;
 }
 
 function thesisBox(meta) {

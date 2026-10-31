@@ -33,6 +33,7 @@ guardrails:
   block_advance_if_contradicted: ["headcount", "total_funding", "round", "person_role"]
   ambiguous_entity: NEEDS_HUMAN            # never guess a company or person
   unstable_data: exclude_feature           # bad source data is never held against a company
+  identity_collision: NEEDS_HUMAN          # a record that looks merged with another company goes to a human
 
 decision_thresholds:
   advance_at_or_above: 0.60                # model probability you would pick it
