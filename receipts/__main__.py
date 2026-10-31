@@ -54,6 +54,9 @@ def main(argv=None):
     p_de.add_argument("--round", type=int, required=True)
     p_de.add_argument("--pick", required=True, help="comma-separated table numbers or names, e.g. 2,5,7")
 
+    p_view = sub.add_parser("view", help="build a clickable HTML view of a run (facts -> receipts -> raw JSON)")
+    p_view.add_argument("run", help="run directory, run id, or 'last'")
+
     sub.add_parser("board", help="show the deal board")
     sub.add_parser("learned", help="show what the agent has learned about your preferences")
 
@@ -74,6 +77,10 @@ def main(argv=None):
         decide(strategy, text, args.round, args.pick)
     elif args.cmd == "board":
         _board()
+    elif args.cmd == "view":
+        from .view import build
+        out = build(_run_dir(args.run))
+        print(f"open {out}")
     elif args.cmd == "learned":
         from .decide import LEARNED_PATH
         print(LEARNED_PATH.read_text(encoding="utf-8") if LEARNED_PATH.exists() else "No decisions recorded yet.")

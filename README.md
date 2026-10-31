@@ -40,6 +40,7 @@ python -m receipts board                      # deal board
 python -m receipts learned                    # what it learned + agreement per round
 python -m receipts run --pitch fixtures/pitches/01_mercury_planted_lies.txt   # verify an inbound pitch
 python -m receipts verify last --witness      # re-prove a run, incl. Crustdata's own usage log
+python -m receipts view last                  # clickable HTML: any fact -> its receipt -> raw API JSON
 python -m receipts tamper last && python -m receipts verify last              # watch it fail
 ```
 
