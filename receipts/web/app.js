@@ -22,7 +22,7 @@ function show(page) {
 async function runJob(title, endpoint, body) {
   const {job} = await api(endpoint, body);
   const box = $("#console"), log = $("#console-log"), st = $("#console-status");
-  box.classList.remove("hidden"); $("#console-title").textContent = title; log.textContent = ""; st.textContent = "running"; st.className = "pill";
+  box.classList.remove("hidden"); $("#console-open").classList.add("hidden"); $("#console-title").textContent = title; log.textContent = ""; st.textContent = "running"; st.className = "pill";
   document.querySelectorAll("button.primary").forEach(b => b.disabled = true);
   let since = 0;
   try {
@@ -39,7 +39,8 @@ async function runJob(title, endpoint, body) {
     }
   } finally { document.querySelectorAll("button.primary").forEach(b => b.disabled = false); }
 }
-$("#console-close").onclick = () => $("#console").classList.add("hidden");
+$("#console-close").onclick = () => { $("#console").classList.add("hidden"); $("#console-open").classList.remove("hidden"); };
+$("#console-open").onclick = () => { $("#console").classList.remove("hidden"); $("#console-open").classList.add("hidden"); };
 
 // ------------------------------------------------------------ receipts modal
 async function openFact(runId, fid) {
